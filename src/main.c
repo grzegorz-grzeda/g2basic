@@ -21,12 +21,14 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-
+//======================================================================================================================
 #include <stdio.h>
-
+//======================================================================================================================
 int main(int argc, char* argv[]) {
-    (void)argc;  // Unused parameter
-    (void)argv;  // Unused parameter
-    printf("Hello, World!\n");
+    (void)argc;
+    (void)argv;
+
+    printf("Welcome to G2Basic!\n");
+
     return 0;
 }
