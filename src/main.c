@@ -280,7 +280,8 @@ int main(int argc, char* argv[]) {
         "10 PRINT \"Hello, World 1 time!\"\n"
         "20 LET A = 5\n"
         "30 PRINT A\n"
-        "40 RUN\n";
+        "40 LET B = \"\"\n"
+        "50 IF A > 0 THEN PRINT \"A is positive\"\n";
 
     printf("Welcome to G2Basic!\n");
     printf("Input:\n------------------\n%s", input);
@@ -292,7 +293,7 @@ int main(int argc, char* argv[]) {
     for (size_t i = 0; i < line_count; i++) {
         printf("Line %d\n", lines[i].line_number);
         for (size_t j = 0; j < lines[i].token_count; j++) {
-            printf("  [%zu]: %8.8s %s\n", j, g2basic_get_token_type_name(lines[i].tokens[j].type),
+            printf("  [%zu]: %8.8s '%s'\n", j, g2basic_get_token_type_name(lines[i].tokens[j].type),
                    lines[i].tokens[j].value ? (*lines[i].tokens[j].value == '\n' ? "\\n" : lines[i].tokens[j].value)
                                             : "NULL");
         }
