@@ -16,6 +16,7 @@
 #define MAX_FUNC_ARGS 8
 #define MAX_PROGRAM_LINES 1000
 #define MAX_LINE_LENGTH 256
+#define MAX_FOR_LOOPS 10
 
 typedef struct {
     char name[MAX_VAR_NAME];
@@ -33,6 +34,15 @@ typedef struct {
     char text[MAX_LINE_LENGTH];
 } ProgramLine;
 
+typedef struct {
+    char var_name[MAX_VAR_NAME];  // Loop variable name
+    double start_value;           // Starting value
+    double end_value;             // Ending value
+    double step_value;            // Step increment (default 1)
+    int for_line_index;           // Index of FOR statement line
+    int next_line_index;  // Index of NEXT statement line (-1 if not found)
+} ForLoop;
+
 static Variable variables[MAX_VARIABLES];
 static int num_variables = 0;
 static Function functions[MAX_FUNCTIONS];
@@ -41,6 +51,9 @@ static int functions_initialized = 0;
 static ProgramLine program[MAX_PROGRAM_LINES];
 static int num_program_lines = 0;
 static int goto_target = -1;  // Target line number for GOTO (-1 = no jump)
+static ForLoop for_stack[MAX_FOR_LOOPS];  // Stack for nested FOR loops
+static int for_stack_top = -1;            // Top of FOR stack (-1 = empty)
+static int current_line_index = -1;       // Current executing line index
 
 typedef struct {
     const char* start;  // beginning of the input (for position reporting)
@@ -49,18 +62,15 @@ typedef struct {
 } Parser;
 /*--------------------------------------------------------------------------------------------------------------------*/
 /* Forward declarations (grammar):
-   statement := assignment | print_stmt | goto_stmt | if_stmt | expr
-   assignment := VARIABLE '=' expr
-   print_stmt := 'PRINT' expr_list
-   goto_stmt := 'GOTO' NUMBER
-   if_stmt := 'IF' comparison 'THEN' (NUMBER | statement)
-   comparison := expr ('>'|'<'|'>='|'<='|'='|'<>') expr
-   expr_list := expr (',' expr)*
-   expr  := term (('+'|'-') term)*
-   term  := factor (('*'|'/') factor)*
-   factor:= NUMBER | VARIABLE | FUNCTION_CALL | '(' expr ')' | ('+'|'-') factor
-   (unary) function_call := IDENTIFIER '(' arg_list ')' arg_list := expr (','
-   expr)*
+   statement := assignment | print_stmt | goto_stmt | if_stmt | for_stmt |
+   next_stmt | expr assignment := VARIABLE '=' expr print_stmt := 'PRINT'
+   expr_list goto_stmt := 'GOTO' NUMBER if_stmt := 'IF' comparison 'THEN'
+   (NUMBER | statement) for_stmt := 'FOR' VARIABLE '=' expr 'TO' expr ['STEP'
+   expr] next_stmt := 'NEXT' VARIABLE comparison := expr
+   ('>'|'<'|'>='|'<='|'='|'<>') expr expr_list := expr (',' expr)* expr  := term
+   (('+'|'-') term)* term  := factor (('*'|'/') factor)* factor:= NUMBER |
+   VARIABLE | FUNCTION_CALL | '(' expr ')' | ('+'|'-') factor (unary)
+   function_call := IDENTIFIER '(' arg_list ')' arg_list := expr (',' expr)*
 */
 static double parse_expr(Parser* p);
 static double parse_statement(Parser* p);
@@ -312,15 +322,27 @@ static void list_program(void) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static int run_program(void) {
-    goto_target = -1;  // Reset GOTO target
+    goto_target = -1;    // Reset GOTO target
+    for_stack_top = -1;  // Reset FOR stack
 
     int i = 0;
     while (i < num_program_lines) {
+        current_line_index = i;  // Track current line for FOR loops
         double result;
+
+        // Update FOR stack with current line index
+        const char* p = program[i].text;
+        while (isspace((unsigned char)*p))
+            p++;
+
+        if (strncmp(p, "FOR", 3) == 0 &&
+            (isspace((unsigned char)p[3]) || p[3] == '\0')) {
+            // About to execute a FOR statement, prepare to update stack
+        }
 
         int ret = expr_eval(program[i].text, &result);
         if (ret == 0) {
-            // Check if GOTO was executed
+            // Check if GOTO was executed (from GOTO, IF-THEN, or NEXT)
             if (goto_target != -1) {
                 // Find the target line
                 int target_index = -1;
@@ -332,7 +354,7 @@ static int run_program(void) {
                 }
 
                 if (target_index == -1) {
-                    printf("Error: GOTO line %d not found\n", goto_target);
+                    printf("Error: line %d not found\n", goto_target);
                     return -1;
                 }
 
@@ -341,7 +363,7 @@ static int run_program(void) {
                 continue;
             }
 
-            // Don't print result for PRINT, GOTO, or IF statements
+            // Don't print result for control statements
             const char* p = program[i].text;
             while (isspace((unsigned char)*p))
                 p++;
@@ -351,8 +373,12 @@ static int run_program(void) {
                 (strncmp(p, "GOTO", 4) != 0 ||
                  !(isspace((unsigned char)p[4]) || p[4] == '\0')) &&
                 (strncmp(p, "IF", 2) != 0 ||
-                 !(isspace((unsigned char)p[2]) || p[2] == '\0'))) {
-                // Not a PRINT, GOTO, or IF statement, show the result
+                 !(isspace((unsigned char)p[2]) || p[2] == '\0')) &&
+                (strncmp(p, "FOR", 3) != 0 ||
+                 !(isspace((unsigned char)p[3]) || p[3] == '\0')) &&
+                (strncmp(p, "NEXT", 4) != 0 ||
+                 !(isspace((unsigned char)p[4]) || p[4] == '\0'))) {
+                // Not a control statement, show the result
                 printf("= %.*g\n", 15, result);
             }
         } else {
@@ -468,14 +494,15 @@ static double parse_goto_statement(Parser* p) {
 /* Parse a comparison (expr op expr) and return 1.0 for true, 0.0 for false */
 static double parse_comparison(Parser* p) {
     double left = parse_expr(p);
-    if (p->err) return NAN;
-    
+    if (p->err)
+        return NAN;
+
     skip_ws(p);
-    
+
     // Parse comparison operator
     char op1 = *p->s;
     char op2 = '\0';
-    
+
     if (op1 == '>' || op1 == '<' || op1 == '=') {
         p->s++;
         // Check for two-character operators
@@ -486,10 +513,11 @@ static double parse_comparison(Parser* p) {
         p->err = "expected comparison operator";
         return NAN;
     }
-    
+
     double right = parse_expr(p);
-    if (p->err) return NAN;
-    
+    if (p->err)
+        return NAN;
+
     // Evaluate comparison
     if (op1 == '>' && op2 == '\0') {
         return (left > right) ? 1.0 : 0.0;
@@ -513,39 +541,40 @@ static double parse_comparison(Parser* p) {
 static double parse_if_statement(Parser* p) {
     // Skip the "IF" keyword (already matched)
     p->s += 2;  // Skip "IF"
-    
+
     skip_ws(p);
-    
+
     // Parse the condition
     double condition = parse_comparison(p);
-    if (p->err) return NAN;
-    
+    if (p->err)
+        return NAN;
+
     skip_ws(p);
-    
+
     // Expect THEN keyword
     if (strncmp(p->s, "THEN", 4) != 0) {
         p->err = "expected THEN after IF condition";
         return NAN;
     }
     p->s += 4;  // Skip "THEN"
-    
+
     skip_ws(p);
-    
+
     // Check if condition is true (non-zero)
     if (condition != 0.0) {
         // Condition is true, execute the THEN part
-        
+
         // Check if THEN is followed by a line number
         if (isdigit((unsigned char)*p->s)) {
             // Parse line number and set GOTO target
             char* endptr;
             long target_line = strtol(p->s, &endptr, 10);
-            
+
             if (target_line < 0 || target_line > 65535) {
                 p->err = "invalid IF-THEN line number";
                 return NAN;
             }
-            
+
             p->s = endptr;
             goto_target = (int)target_line;
             return 0.0;
@@ -556,9 +585,158 @@ static double parse_if_statement(Parser* p) {
     } else {
         // Condition is false, skip the THEN part
         // Just advance to end of line (we'll ignore the THEN part)
-        while (*p->s != '\0') p->s++;
+        while (*p->s != '\0')
+            p->s++;
         return 0.0;
     }
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+/* Parse and execute a FOR statement */
+static double parse_for_statement(Parser* p) {
+    // Skip the "FOR" keyword (already matched)
+    p->s += 3;  // Skip "FOR"
+
+    skip_ws(p);
+
+    // Parse variable name
+    if (!is_alpha_or_underscore(*p->s)) {
+        p->err = "expected variable name after FOR";
+        return NAN;
+    }
+
+    char var_name[MAX_VAR_NAME];
+    int len = 0;
+    while (len < MAX_VAR_NAME - 1 && is_alnum_or_underscore(*p->s)) {
+        var_name[len++] = *p->s++;
+    }
+    var_name[len] = '\0';
+
+    skip_ws(p);
+
+    // Expect '='
+    if (*p->s != '=') {
+        p->err = "expected '=' after FOR variable";
+        return NAN;
+    }
+    p->s++;
+
+    // Parse start value
+    double start_val = parse_expr(p);
+    if (p->err)
+        return NAN;
+
+    skip_ws(p);
+
+    // Expect TO
+    if (strncmp(p->s, "TO", 2) != 0) {
+        p->err = "expected TO after FOR start value";
+        return NAN;
+    }
+    p->s += 2;
+
+    // Parse end value
+    double end_val = parse_expr(p);
+    if (p->err)
+        return NAN;
+
+    skip_ws(p);
+
+    // Check for optional STEP
+    double step_val = 1.0;
+    if (strncmp(p->s, "STEP", 4) == 0 &&
+        (isspace((unsigned char)p->s[4]) || p->s[4] == '\0')) {
+        p->s += 4;
+        step_val = parse_expr(p);
+        if (p->err)
+            return NAN;
+    }
+
+    // Check for stack overflow
+    if (for_stack_top >= MAX_FOR_LOOPS - 1) {
+        p->err = "FOR loop nesting too deep";
+        return NAN;
+    }
+
+    // Push new FOR loop onto stack
+    for_stack_top++;
+    ForLoop* loop = &for_stack[for_stack_top];
+    strncpy(loop->var_name, var_name, MAX_VAR_NAME - 1);
+    loop->var_name[MAX_VAR_NAME - 1] = '\0';
+    loop->start_value = start_val;
+    loop->end_value = end_val;
+    loop->step_value = step_val;
+    loop->for_line_index = current_line_index;  // Use current executing line
+    loop->next_line_index = -1;
+
+    // Set the loop variable to start value
+    set_variable(var_name, start_val);
+
+    return 0.0;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+/* Parse and execute a NEXT statement */
+static double parse_next_statement(Parser* p) {
+    // Skip the "NEXT" keyword (already matched)
+    p->s += 4;  // Skip "NEXT"
+
+    skip_ws(p);
+
+    // Parse variable name
+    if (!is_alpha_or_underscore(*p->s)) {
+        p->err = "expected variable name after NEXT";
+        return NAN;
+    }
+
+    char var_name[MAX_VAR_NAME];
+    int len = 0;
+    while (len < MAX_VAR_NAME - 1 && is_alnum_or_underscore(*p->s)) {
+        var_name[len++] = *p->s++;
+    }
+    var_name[len] = '\0';
+
+    // Check if there's a matching FOR loop
+    if (for_stack_top < 0) {
+        p->err = "NEXT without matching FOR";
+        return NAN;
+    }
+
+    ForLoop* loop = &for_stack[for_stack_top];
+    if (strcmp(loop->var_name, var_name) != 0) {
+        p->err = "NEXT variable doesn't match FOR variable";
+        return NAN;
+    }
+
+    // Get current variable value and increment it
+    double current_val = get_variable(var_name);
+    if (isnan(current_val)) {
+        p->err = "FOR variable not found";
+        return NAN;
+    }
+
+    current_val += loop->step_value;
+
+    // Check if loop should continue
+    int continue_loop;
+    if (loop->step_value > 0) {
+        continue_loop = (current_val <= loop->end_value);
+    } else {
+        continue_loop = (current_val >= loop->end_value);
+    }
+
+    if (continue_loop) {
+        // Update variable and jump back to the line AFTER the FOR statement
+        set_variable(var_name, current_val);
+        if (loop->for_line_index >= 0 &&
+            loop->for_line_index < num_program_lines - 1) {
+            // Jump to the line after the FOR statement
+            goto_target = program[loop->for_line_index + 1].line_number;
+        }
+    } else {
+        // Loop finished, pop from stack
+        for_stack_top--;
+    }
+
+    return 0.0;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void skip_ws(Parser* p) {
@@ -786,13 +964,25 @@ static double parse_statement(Parser* p) {
         (isspace((unsigned char)p->s[4]) || p->s[4] == '\0')) {
         return parse_goto_statement(p);
     }
-    
+
     // Check for IF statement
     if (strncmp(p->s, "IF", 2) == 0 &&
         (isspace((unsigned char)p->s[2]) || p->s[2] == '\0')) {
         return parse_if_statement(p);
     }
-    
+
+    // Check for FOR statement
+    if (strncmp(p->s, "FOR", 3) == 0 &&
+        (isspace((unsigned char)p->s[3]) || p->s[3] == '\0')) {
+        return parse_for_statement(p);
+    }
+
+    // Check for NEXT statement
+    if (strncmp(p->s, "NEXT", 4) == 0 &&
+        (isspace((unsigned char)p->s[4]) || p->s[4] == '\0')) {
+        return parse_next_statement(p);
+    }
+
     // Check if this looks like an assignment (variable = ...)
     const char* saved_pos = p->s;
 

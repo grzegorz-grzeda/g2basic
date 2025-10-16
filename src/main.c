@@ -1,9 +1,9 @@
 /*--------------------------------------------------------------------------------------------------------------------*/
 /* SPDX-License-Identifier: MIT */
 /*--------------------------------------------------------------------------------------------------------------------*/
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
-#include <ctype.h>
 #include "expr.h"
 /*--------------------------------------------------------------------------------------------------------------------*/
 int main(int argc, char* argv[]) {
@@ -12,7 +12,9 @@ int main(int argc, char* argv[]) {
     printf("G2BASIC Interpreter with line numbers. Ctrl-D/Ctrl-Z to exit.\n");
     printf("Examples:\n");
     printf("  Immediate: 'x = 5', 'y = sin(x)', 'IF x > 3 THEN PRINT x'\n");
-    printf("  Program: '10 x = 5', '20 IF x > 3 THEN 50', '30 PRINT \"small\"', '40 GOTO 60', '50 PRINT \"big\"', '60 END'\n");
+    printf(
+        "  Program: '10 FOR I = 1 TO 5', '20 PRINT I', '30 NEXT I', 'LIST', "
+        "'RUN', 'NEW'\n");
 
     while (1) {
         printf("> ");
@@ -30,21 +32,33 @@ int main(int argc, char* argv[]) {
 
         switch (result) {
             case 0:  // Immediate evaluation success
-                // Check if it was a PRINT, GOTO, or IF statement (don't show result)
+                // Check if it was a control statement (don't show result)
                 {
                     const char* p = line;
-                    while (isspace((unsigned char)*p)) p++;
-                    if ((strncmp(p, "PRINT", 5) != 0 || 
+                    while (isspace((unsigned char)*p))
+                        p++;
+                    if ((strncmp(p, "PRINT", 5) != 0 ||
                          !(isspace((unsigned char)p[5]) || p[5] == '\0')) &&
-                        (strncmp(p, "GOTO", 4) != 0 || 
+                        (strncmp(p, "GOTO", 4) != 0 ||
                          !(isspace((unsigned char)p[4]) || p[4] == '\0')) &&
-                        (strncmp(p, "IF", 2) != 0 || 
-                         !(isspace((unsigned char)p[2]) || p[2] == '\0'))) {
-                        // Not a PRINT, GOTO, or IF statement, show the result
+                        (strncmp(p, "IF", 2) != 0 ||
+                         !(isspace((unsigned char)p[2]) || p[2] == '\0')) &&
+                        (strncmp(p, "FOR", 3) != 0 ||
+                         !(isspace((unsigned char)p[3]) || p[3] == '\0')) &&
+                        (strncmp(p, "NEXT", 4) != 0 ||
+                         !(isspace((unsigned char)p[4]) || p[4] == '\0'))) {
+                        // Not a control statement, show the result
                         printf("= %.*g\n", 15, val);
                     } else if (strncmp(p, "GOTO", 4) == 0) {
                         // GOTO in immediate mode doesn't make sense
-                        printf("Warning: GOTO in immediate mode has no effect\n");
+                        printf(
+                            "Warning: GOTO in immediate mode has no effect\n");
+                    } else if (strncmp(p, "FOR", 3) == 0 ||
+                               strncmp(p, "NEXT", 4) == 0) {
+                        // FOR/NEXT in immediate mode doesn't make sense
+                        printf(
+                            "Warning: FOR/NEXT in immediate mode has no "
+                            "effect\n");
                     }
                 }
                 break;
