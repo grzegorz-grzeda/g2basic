@@ -8,8 +8,8 @@
 int main(int argc, char* argv[]) {
     // Simple REPL with variable support
     char line[1024];
-    printf("Simple expression REPL with variables. Ctrl-D/Ctrl-Z to exit.\n");
-    printf("Examples: 'x = 5', 'y = x + 3', 'x + y * 2'\n");
+    printf("Simple expression REPL with variables and functions. Ctrl-D/Ctrl-Z to exit.\n");
+    printf("Examples: 'x = 5', 'y = sin(x)', 'max(x, y, 10)', 'sqrt(x*x + y*y)'\n");
     while (1) {
         printf("> ");
         if (!fgets(line, sizeof(line), stdin))

@@ -12,3 +12,9 @@ project(g2basic
 add_executable(${PROJECT_NAME})
 
 add_subdirectory(src)
+
+# Compiler options
+add_compile_options(-Wall -Wextra -Wpedantic -Werror)
+
+# Link math library
+target_link_libraries(${PROJECT_NAME} m)
