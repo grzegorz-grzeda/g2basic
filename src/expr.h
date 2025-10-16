@@ -15,5 +15,11 @@ int expr_eval(const char* expr, double* result);
    func_ptr: pointer to function that takes (double[], int) and returns double
    Returns 0 on success, -1 on error */
 int expr_register_function(const char* name, int arg_count, double (*func_ptr)(double[], int));
+
+/* Parse a line that may contain a line number for BASIC program entry
+   input: line to parse (may start with line number)
+   result: pointer to store result value
+   Returns: 0 = immediate evaluation success, 1 = line deleted, 2 = line stored, -1 = error */
+int expr_parse_line(const char* input, double* result);
 /*--------------------------------------------------------------------------------------------------------------------*/
 #endif  // EXPR_H

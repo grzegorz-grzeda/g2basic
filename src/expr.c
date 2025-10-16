@@ -14,6 +14,8 @@
 #define MAX_FUNCTIONS 100
 #define MAX_FUNC_NAME 32
 #define MAX_FUNC_ARGS 8
+#define MAX_PROGRAM_LINES 1000
+#define MAX_LINE_LENGTH 256
 
 typedef struct {
     char name[MAX_VAR_NAME];
@@ -26,11 +28,18 @@ typedef struct {
     double (*func_ptr)(double args[], int count);
 } Function;
 
+typedef struct {
+    int line_number;
+    char text[MAX_LINE_LENGTH];
+} ProgramLine;
+
 static Variable variables[MAX_VARIABLES];
 static int num_variables = 0;
 static Function functions[MAX_FUNCTIONS];
 static int num_functions = 0;
 static int functions_initialized = 0;
+static ProgramLine program[MAX_PROGRAM_LINES];
+static int num_program_lines = 0;
 
 typedef struct {
     const char* start;  // beginning of the input (for position reporting)
@@ -204,6 +213,117 @@ static void init_builtin_functions(void) {
     register_function("ceil", 1, func_ceil);
     register_function("min", -1, func_min);  // Variadic
     register_function("max", -1, func_max);  // Variadic
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+/* Program line management functions */
+static int find_line_index(int line_number) {
+    for (int i = 0; i < num_program_lines; i++) {
+        if (program[i].line_number == line_number) {
+            return i;
+        }
+        if (program[i].line_number > line_number) {
+            return -1;  // Line not found, would be inserted here
+        }
+    }
+    return -1;  // Line not found, would be inserted at end
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+static void insert_program_line(int line_number, const char* text) {
+    // Find insertion point
+    int insert_pos = num_program_lines;
+    for (int i = 0; i < num_program_lines; i++) {
+        if (program[i].line_number == line_number) {
+            // Replace existing line
+            strncpy(program[i].text, text, MAX_LINE_LENGTH - 1);
+            program[i].text[MAX_LINE_LENGTH - 1] = '\0';
+            return;
+        }
+        if (program[i].line_number > line_number) {
+            insert_pos = i;
+            break;
+        }
+    }
+    
+    // Check if we have space
+    if (num_program_lines >= MAX_PROGRAM_LINES) {
+        return;  // No space for more lines
+    }
+    
+    // Shift lines to make room
+    for (int i = num_program_lines; i > insert_pos; i--) {
+        program[i] = program[i - 1];
+    }
+    
+    // Insert new line
+    program[insert_pos].line_number = line_number;
+    strncpy(program[insert_pos].text, text, MAX_LINE_LENGTH - 1);
+    program[insert_pos].text[MAX_LINE_LENGTH - 1] = '\0';
+    num_program_lines++;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+static void delete_program_line(int line_number) {
+    int index = find_line_index(line_number);
+    if (index < 0 || program[index].line_number != line_number) {
+        return;  // Line not found
+    }
+    
+    // Shift lines down
+    for (int i = index; i < num_program_lines - 1; i++) {
+        program[i] = program[i + 1];
+    }
+    num_program_lines--;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+static void clear_program(void) {
+    num_program_lines = 0;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+static void list_program(void) {
+    for (int i = 0; i < num_program_lines; i++) {
+        printf("%d %s\n", program[i].line_number, program[i].text);
+    }
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+static int run_program(void) {
+    for (int i = 0; i < num_program_lines; i++) {
+        double result;
+        printf("Running line %d: %s\n", program[i].line_number, program[i].text);
+        
+        int ret = expr_eval(program[i].text, &result);
+        if (ret == 0) {
+            printf("= %.*g\n", 15, result);
+        } else {
+            printf("Error in line %d\n", program[i].line_number);
+            return -1;  // Stop execution on error
+        }
+    }
+    return 0;  // Success
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+/* Handle special BASIC commands */
+static int handle_basic_command(const char* input) {
+    const char* p = input;
+    
+    // Skip leading whitespace
+    while (isspace((unsigned char)*p)) p++;
+    
+    if (strncmp(p, "LIST", 4) == 0 && (isspace((unsigned char)p[4]) || p[4] == '\0')) {
+        list_program();
+        return 1;  // Command handled
+    }
+    
+    if (strncmp(p, "RUN", 3) == 0 && (isspace((unsigned char)p[3]) || p[3] == '\0')) {
+        run_program();
+        return 1;  // Command handled
+    }
+    
+    if (strncmp(p, "NEW", 3) == 0 && (isspace((unsigned char)p[3]) || p[3] == '\0')) {
+        clear_program();
+        printf("Program cleared\n");
+        return 1;  // Command handled
+    }
+    
+    return 0;  // Not a special command
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void skip_ws(Parser* p) {
@@ -481,5 +601,56 @@ int expr_register_function(const char* name, int arg_count, double (*func_ptr)(d
     }
     
     return register_function(name, arg_count, func_ptr);
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+/* Parse a line that may start with a line number */
+int expr_parse_line(const char* input, double* result) {
+    // Initialize built-in functions if not already done
+    if (!functions_initialized) {
+        init_builtin_functions();
+        functions_initialized = 1;
+    }
+    
+    const char* p = input;
+    
+    // Skip leading whitespace
+    while (isspace((unsigned char)*p)) p++;
+    
+    // Check for special BASIC commands first
+    if (handle_basic_command(input)) {
+        *result = 0;
+        return 3;  // Special command executed
+    }
+    
+    // Check if line starts with a number (line number)
+    if (isdigit((unsigned char)*p)) {
+        // Parse line number
+        char* endptr;
+        long line_num = strtol(p, &endptr, 10);
+        
+        if (line_num < 0 || line_num > 65535) {
+            return -1;  // Invalid line number
+        }
+        
+        p = endptr;
+        
+        // Skip whitespace after line number
+        while (isspace((unsigned char)*p)) p++;
+        
+        if (*p == '\0') {
+            // Just a line number - delete the line
+            delete_program_line((int)line_num);
+            *result = line_num;
+            return 1;  // Line deleted
+        } else {
+            // Line number followed by statement - store the line
+            insert_program_line((int)line_num, p);
+            *result = line_num;
+            return 2;  // Line stored
+        }
+    } else {
+        // No line number - immediate mode evaluation
+        return expr_eval(input, result);
+    }
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
