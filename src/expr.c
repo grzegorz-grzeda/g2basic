@@ -12,7 +12,6 @@
 /*--------------------------------------------------------------------------------------------------------------------*/
 #define MAX_VAR_NAME 32
 #define MAX_FUNC_ARGS 8
-#define MAX_LINE_LENGTH 256
 #define MAX_FOR_LOOPS 10
 #define MAX_GOSUB_STACK 20
 
