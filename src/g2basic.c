@@ -1,3 +1,37 @@
+/**
+ * @file g2basic.c
+ * @brief G2Basic BASIC Language Interpreter Implementation
+ *
+ * This file contains the complete implementation of the G2Basic interpreter,
+ * a lightweight BASIC language interpreter designed for microcontrollers and
+ * embedded systems with dynamic memory management.
+ *
+ * Key features implemented:
+ * - Dynamic linked-list based data structures (no fixed limits)
+ * - Recursive descent expression parser
+ * - Full BASIC language support including:
+ *   - Variables and mathematical expressions
+ *   - Control flow: IF/THEN, FOR/NEXT loops with proper nesting
+ *   - Program flow: GOTO, GOSUB/RETURN with unlimited nesting
+ *   - Built-in mathematical functions (sin, cos, sqrt, pow, etc.)
+ *   - PRINT statements with configurable output
+ *   - Line-based program storage and execution
+ * - Memory-safe operations with proper cleanup
+ * - Error handling and reporting
+ *
+ * Architecture:
+ * - All data structures use dynamic linked lists (variables, functions, program
+ * lines, stacks)
+ * - No arbitrary limits on nesting depth or program size (memory permitting)
+ * - Configurable output system for different environments
+ * - Thread-safe design for single-threaded usage
+ *
+ * @author Grzegorz Grzęda
+ * @version 0.0.1
+ * @date 2025
+ * @copyright SPDX-License-Identifier: MIT
+ */
+
 /*--------------------------------------------------------------------------------------------------------------------*/
 /* SPDX-License-Identifier: MIT */
 /*--------------------------------------------------------------------------------------------------------------------*/
@@ -11,74 +45,206 @@
 #include <stdlib.h>
 #include <string.h>
 /*--------------------------------------------------------------------------------------------------------------------*/
+
+/** @brief Maximum number of arguments allowed for registered functions */
 #define MAX_FUNC_ARGS 8
-/*--------------------------------------------------------------------------------------------------------------------*/
-#define G2BASIC_KEYWORD_IF "IF"
-#define G2BASIC_KEYWORD_THEN "THEN"
-#define G2BASIC_KEYWORD_FOR "FOR"
-#define G2BASIC_KEYWORD_TO "TO"
-#define G2BASIC_KEYWORD_NEXT "NEXT"
-#define G2BASIC_KEYWORD_GOTO "GOTO"
-#define G2BASIC_KEYWORD_GOSUB "GOSUB"
-#define G2BASIC_KEYWORD_PRINT "PRINT"
-#define G2BASIC_KEYWORD_RETURN "RETURN"
-#define G2BASIC_KEYWORD_END "END"
-/*--------------------------------------------------------------------------------------------------------------------*/
-typedef struct Variable {
-    char* name;  // Dynamically allocated variable name
-    double value;
-    struct Variable* next;  // Next variable in linked list
-} Variable;
-/*--------------------------------------------------------------------------------------------------------------------*/
-typedef struct Function {
-    char* name;     // Dynamically allocated function name
-    int arg_count;  // Number of arguments (-1 for variadic)
-    double (*func_ptr)(double args[], int count);
-    struct Function* next;  // Next function in linked list
-} Function;
-/*--------------------------------------------------------------------------------------------------------------------*/
-typedef struct ProgramLine {
-    int line_number;
-    char* text;                // Dynamically allocated program line text
-    struct ProgramLine* next;  // Next program line in linked list
-} ProgramLine;
-/*--------------------------------------------------------------------------------------------------------------------*/
-typedef struct ForLoop {
-    char* var_name;        // Dynamically allocated loop variable name
-    double start_value;    // Starting value
-    double end_value;      // Ending value
-    double step_value;     // Step increment (default 1)
-    int for_line_number;   // Line number of FOR statement
-    struct ForLoop* next;  // Next loop in the stack (linked list)
-} ForLoop;
-/*--------------------------------------------------------------------------------------------------------------------*/
-typedef struct GosubStackEntry {
-    int return_line_number;        // Line number to return to
-    struct GosubStackEntry* next;  // Next entry in the stack (linked list)
-} GosubStackEntry;
-/*--------------------------------------------------------------------------------------------------------------------*/
-static Variable* variables_head = NULL;   // Head of variables linked list
-static Function* functions_head = NULL;   // Head of functions linked list
-static ProgramLine* program_head = NULL;  // Head of program lines linked list
-static int goto_target = -1;  // Target line number for GOTO (-1 = no jump)
-static ForLoop* for_stack_head = NULL;  // Head of FOR loops stack (linked list)
-static int current_line_index = -1;     // Current executing line index
-static GosubStackEntry* gosub_stack_head =
-    NULL;  // Head of GOSUB stack (linked list)
 
 /*--------------------------------------------------------------------------------------------------------------------*/
+/* BASIC Language Keywords - These define the supported BASIC language elements
+ */
+
+/** @brief IF statement keyword for conditional execution */
+#define G2BASIC_KEYWORD_IF "IF"
+/** @brief THEN statement keyword for conditional execution */
+#define G2BASIC_KEYWORD_THEN "THEN"
+/** @brief FOR statement keyword for loop initialization */
+#define G2BASIC_KEYWORD_FOR "FOR"
+/** @brief TO keyword for FOR loop range specification */
+#define G2BASIC_KEYWORD_TO "TO"
+/** @brief NEXT statement keyword for loop iteration */
+#define G2BASIC_KEYWORD_NEXT "NEXT"
+/** @brief GOTO statement keyword for unconditional jump */
+#define G2BASIC_KEYWORD_GOTO "GOTO"
+/** @brief GOSUB statement keyword for subroutine call */
+#define G2BASIC_KEYWORD_GOSUB "GOSUB"
+/** @brief PRINT statement keyword for output */
+#define G2BASIC_KEYWORD_PRINT "PRINT"
+/** @brief RETURN statement keyword for subroutine return */
+#define G2BASIC_KEYWORD_RETURN "RETURN"
+/** @brief END statement keyword for program termination */
+#define G2BASIC_KEYWORD_END "END"
+
+/*--------------------------------------------------------------------------------------------------------------------*/
+
+/**
+ * @brief Variable storage structure
+ *
+ * Represents a single variable in the BASIC program. Variables are stored
+ * in a dynamically allocated linked list with no arbitrary limits on the
+ * number of variables that can be created.
+ *
+ * All variable names are dynamically allocated and must be freed when the
+ * variable is destroyed. Variable values are stored as double precision
+ * floating point numbers, supporting both integer and decimal arithmetic.
+ *
+ * @note Variables are case-sensitive
+ * @note Variable names must start with a letter and contain only alphanumeric
+ * characters and underscores
+ */
+typedef struct Variable {
+    char* name;            /**< Dynamically allocated variable name string */
+    double value;          /**< Variable value (double precision float) */
+    struct Variable* next; /**< Pointer to next variable in linked list */
+} Variable;
+/*--------------------------------------------------------------------------------------------------------------------*/
+
+/**
+ * @brief Function registration structure
+ *
+ * Represents a registered function that can be called from BASIC expressions.
+ * Functions are stored in a dynamically allocated linked list, allowing
+ * unlimited number of custom functions to be registered.
+ *
+ * Functions can have a fixed number of arguments or be variadic. The function
+ * pointer must implement the signature: double func(double[], int)
+ *
+ * @note Function names are case-sensitive
+ * @note Function names must be valid identifiers (alphanumeric + underscore,
+ * starting with letter)
+ */
+typedef struct Function {
+    char* name;    /**< Dynamically allocated function name string */
+    int arg_count; /**< Number of arguments expected (-1 for variadic functions)
+                    */
+    double (*func_ptr)(double args[],
+                       int count); /**< Pointer to implementing C function */
+    struct Function* next; /**< Pointer to next function in linked list */
+} Function;
+
+/*--------------------------------------------------------------------------------------------------------------------*/
+
+/**
+ * @brief Program line storage structure
+ *
+ * Represents a single line of BASIC program code. Program lines are stored
+ * in a dynamically allocated linked list, sorted by line number for proper
+ * execution order.
+ *
+ * Each line contains the original text of the BASIC statement, which is
+ * parsed and executed when the program runs. Line numbers must be positive
+ * integers and are used for program flow control (GOTO, GOSUB, etc.).
+ *
+ * @note Line numbers must be unique within a program
+ * @note Lines are automatically sorted by line number
+ * @note Line text is dynamically allocated and must be freed when destroyed
+ */
+typedef struct ProgramLine {
+    int line_number; /**< Line number for this program line (must be positive)
+                      */
+    char* text;      /**< Dynamically allocated program line text */
+    struct ProgramLine*
+        next; /**< Pointer to next program line in sorted linked list */
+} ProgramLine;
+
+/*--------------------------------------------------------------------------------------------------------------------*/
+
+/**
+ * @brief FOR loop state structure
+ *
+ * Represents the state of a single FOR loop during program execution.
+ * FOR loops are stored in a stack implemented as a linked list, allowing
+ * unlimited nesting depth of FOR loops.
+ *
+ * The structure maintains all information needed to properly iterate the
+ * loop and return to the correct program location for each iteration.
+ * Loop variables are dynamically allocated and automatically managed.
+ *
+ * @note FOR loops support both positive and negative step values
+ * @note Loop variables are automatically created and managed
+ * @note Nested FOR loops are fully supported with proper scoping
+ */
+typedef struct ForLoop {
+    char* var_name;      /**< Dynamically allocated loop variable name */
+    double start_value;  /**< Starting value for the loop */
+    double end_value;    /**< Ending value for the loop */
+    double step_value;   /**< Step increment (default 1, can be negative) */
+    int for_line_number; /**< Line number of the FOR statement */
+    struct ForLoop*
+        next; /**< Pointer to next loop in the stack (linked list) */
+} ForLoop;
+/*--------------------------------------------------------------------------------------------------------------------*/
+
+/**
+ * @brief GOSUB call stack entry structure
+ *
+ * Represents a single GOSUB subroutine call on the call stack. GOSUB calls
+ * are stored in a stack implemented as a linked list, allowing unlimited
+ * nesting depth of subroutine calls.
+ *
+ * Each entry stores the line number to return to when the corresponding
+ * RETURN statement is executed. The stack maintains proper nesting order
+ * for nested GOSUB calls.
+ *
+ * @note GOSUB calls support unlimited nesting depth
+ * @note Each GOSUB must have a corresponding RETURN statement
+ * @note The return line number can be -2 to indicate end of program
+ */
+typedef struct GosubStackEntry {
+    int return_line_number; /**< Line number to return to after RETURN statement
+                             */
+    struct GosubStackEntry*
+        next; /**< Pointer to next entry in the stack (linked list) */
+} GosubStackEntry;
+
+/*--------------------------------------------------------------------------------------------------------------------*/
+/* Global Variables - Internal interpreter state */
+
+static Variable* variables_head = NULL; /**< Head of variables linked list */
+static Function* functions_head = NULL; /**< Head of functions linked list */
+static ProgramLine* program_head =
+    NULL;                    /**< Head of program lines linked list */
+static int goto_target = -1; /**< Target line number for GOTO (-1 = no jump) */
+static ForLoop* for_stack_head =
+    NULL; /**< Head of FOR loops stack (linked list) */
+static int current_line_index = -1; /**< Current executing line index */
+static GosubStackEntry* gosub_stack_head =
+    NULL; /**< Head of GOSUB stack (linked list) */
+
+// Print function pointer for output
+static void (*print_function)(const char* str) =
+    NULL; /**< User-provided print function for output */
+
+/*--------------------------------------------------------------------------------------------------------------------*/
+
+/**
+ * @brief Expression parser state structure
+ *
+ * Maintains the state of the recursive descent parser during expression
+ * evaluation and statement parsing. The parser works by advancing through
+ * the input string character by character, maintaining position and error
+ * state.
+ *
+ * The parser supports:
+ * - Mathematical expressions with operator precedence
+ * - Variable references and assignments
+ * - Function calls with arguments
+ * - BASIC language statements and control flow
+ * - Error reporting with position information
+ *
+ * @note The parser temporarily modifies the input string during parsing
+ * @note Error messages are statically allocated string literals
+ */
 typedef struct {
-    const char* start;  // beginning of the input (for position reporting)
-    const char* s;      // current cursor
-    const char* err;    // error message (NULL if ok)
+    const char*
+        start; /**< Beginning of the input string (for position reporting) */
+    const char* s;   /**< Current parsing cursor position */
+    const char* err; /**< Error message string (NULL if no error) */
 } Parser;
 /*--------------------------------------------------------------------------------------------------------------------*/
 typedef struct Keyword {
     const char* word;
     double (*parser_func)(Parser* p);
 } Keyword;
-/*--------------------------------------------------------------------------------------------------------------------*/
-static void (*print_function)(const char* str) = NULL;
 /*--------------------------------------------------------------------------------------------------------------------*/
 /* Forward declarations (grammar):
    statement := assignment | print_stmt | goto_stmt | if_stmt | for_stmt |
@@ -1250,6 +1416,13 @@ static double parse_statement(Parser* p) {
     return parse_expr(p);
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
+/* PUBLIC API IMPLEMENTATION */
+/*--------------------------------------------------------------------------------------------------------------------*/
+/**
+ * @brief Initialize the G2Basic interpreter system
+ *
+ * @copydetails g2basic_init()
+ */
 void g2basic_init(void (*print_func)(const char* str)) {
     print_function = print_func;
 
