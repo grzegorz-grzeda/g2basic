@@ -1,7 +1,7 @@
 /*--------------------------------------------------------------------------------------------------------------------*/
 /* SPDX-License-Identifier: MIT */
 /*--------------------------------------------------------------------------------------------------------------------*/
-#include "expr.h"
+#include "g2basic.h"
 #include <ctype.h>
 #include <math.h>
 #include <stdarg.h>
@@ -100,6 +100,8 @@ static void (*print_function)(const char* str) = NULL;
    function_call := IDENTIFIER '(' arg_list ')'
    arg_list := expr (',' expr)*
 */
+/*--------------------------------------------------------------------------------------------------------------------*/
+static int g2basic_eval(const char* expr, double* result, const char** error);
 /*--------------------------------------------------------------------------------------------------------------------*/
 static double parse_expr(Parser* p);
 /*--------------------------------------------------------------------------------------------------------------------*/
@@ -361,9 +363,9 @@ static Function* find_function(const char* name) {
     return NULL;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-static int register_function(const char* name,
-                             int arg_count,
-                             double (*func_ptr)(double[], int)) {
+int g2basic_register_function(const char* name,
+                              int arg_count,
+                              double (*func_ptr)(double[], int)) {
     if (find_function(name) != NULL) {
         return -1;
     }
@@ -485,21 +487,20 @@ static double func_max(double args[], int count) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void init_builtin_functions(void) {
-    register_function("sin", 1, func_sin);
-    register_function("cos", 1, func_cos);
-    register_function("tan", 1, func_tan);
-    register_function("sqrt", 1, func_sqrt);
-    register_function("abs", 1, func_abs);
-    register_function("pow", 2, func_pow);
-    register_function("log", 1, func_log);
-    register_function("log10", 1, func_log10);
-    register_function("exp", 1, func_exp);
-    register_function("floor", 1, func_floor);
-    register_function("ceil", 1, func_ceil);
-    register_function("min", -1, func_min);
-    register_function("max", -1, func_max);
+    g2basic_register_function("sin", 1, func_sin);
+    g2basic_register_function("cos", 1, func_cos);
+    g2basic_register_function("tan", 1, func_tan);
+    g2basic_register_function("sqrt", 1, func_sqrt);
+    g2basic_register_function("abs", 1, func_abs);
+    g2basic_register_function("pow", 2, func_pow);
+    g2basic_register_function("log", 1, func_log);
+    g2basic_register_function("log10", 1, func_log10);
+    g2basic_register_function("exp", 1, func_exp);
+    g2basic_register_function("floor", 1, func_floor);
+    g2basic_register_function("ceil", 1, func_ceil);
+    g2basic_register_function("min", -1, func_min);
+    g2basic_register_function("max", -1, func_max);
 }
-/*--------------------------------------------------------------------------------------------------------------------*/
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void delete_program_line(int line_number) {
     ProgramLine* to_delete = find_program_line(line_number);
@@ -554,15 +555,13 @@ static int run_program(void) {
         }
 
         const char* error = NULL;
-        int ret = expr_eval(current_line->text, &result, &error);
+        int ret = g2basic_eval(current_line->text, &result, &error);
         if (ret != 0) {
             safe_printf("Error in line %d: %s\n", current_line->line_number,
                         error ? error : "Unknown error");
             return -1;
         }
 
-        // Check if GOTO was executed (from GOTO, IF-THEN, NEXT, or
-        // GOSUB/RETURN)
         if (goto_target != -1) {
             if (goto_target == -2) {
                 break;
@@ -1251,7 +1250,7 @@ static double parse_statement(Parser* p) {
     return parse_expr(p);
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-void expr_init(void (*print_func)(const char* str)) {
+void g2basic_init(void (*print_func)(const char* str)) {
     print_function = print_func;
 
     clear_all_variables();
@@ -1265,7 +1264,7 @@ void expr_init(void (*print_func)(const char* str)) {
     init_builtin_functions();
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-int expr_eval(const char* expr, double* result, const char** error) {
+static int g2basic_eval(const char* expr, double* result, const char** error) {
     Parser p = {.start = expr, .s = expr, .err = NULL};
     double v = parse_statement(&p);
     if (p.err) {
@@ -1283,14 +1282,7 @@ int expr_eval(const char* expr, double* result, const char** error) {
     return 0;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-int expr_register_function(const char* name,
-                           int arg_count,
-                           double (*func_ptr)(double[], int)) {
-    return register_function(name, arg_count, func_ptr);
-}
-/*--------------------------------------------------------------------------------------------------------------------*/
-/* Parse a line that may start with a line number */
-int expr_parse_line(const char* input, double* result, const char** error) {
+int g2basic_parse(const char* input, double* result, const char** error) {
     const char* p = input;
 
     while (isspace((unsigned char)*p))
@@ -1331,7 +1323,7 @@ int expr_parse_line(const char* input, double* result, const char** error) {
         }
     } else {
         // No line number - immediate mode evaluation
-        return expr_eval(input, result, error);
+        return g2basic_eval(input, result, error);
     }
 }
 /*--------------------------------------------------------------------------------------------------------------------*/

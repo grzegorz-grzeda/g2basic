@@ -9,7 +9,7 @@ project(g2basic
     DESCRIPTION "G2Basic interpreter for Microcontrollers"
 )
 
-add_executable(${PROJECT_NAME})
+add_library(${PROJECT_NAME})
 
 add_subdirectory(src)
 
@@ -18,3 +18,5 @@ add_compile_options(-Wall -Wextra -Wpedantic -Werror)
 
 # Link math library
 target_link_libraries(${PROJECT_NAME} m)
+
+add_subdirectory(examples)

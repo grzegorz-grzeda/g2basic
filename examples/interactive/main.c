@@ -4,7 +4,7 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
-#include "expr.h"
+#include "g2basic.h"
 /*--------------------------------------------------------------------------------------------------------------------*/
 #define MAX_LINE_LENGTH 256
 /*--------------------------------------------------------------------------------------------------------------------*/
@@ -15,10 +15,11 @@ static void basic_print(const char* str) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 int main(int argc, char* argv[]) {
+    (void)argc;
+    (void)argv;
     char line[MAX_LINE_LENGTH];
 
-    // Initialize the expression evaluator
-    expr_init(basic_print);
+    g2basic_init(basic_print);
 
     printf(
         "G2BASIC Interpreter with line numbers. Ctrl-C/Ctrl-D/Ctrl-Z to "
@@ -36,7 +37,7 @@ int main(int argc, char* argv[]) {
 
         double val;
         const char* error = NULL;
-        expr_parse_line(line, &val, &error);
+        g2basic_parse(line, &val, &error);
         if (error) {
             printf("Error: %s\n", error);
         }
