@@ -361,7 +361,7 @@ static int run_program(void) {
         int ret = expr_eval(program[i].text, &result, &error);
         if (ret != 0) {
             safe_printf("Error in line %d: %s\n", program[i].line_number,
-                   error ? error : "Unknown error");
+                        error ? error : "Unknown error");
             return -1;  // Stop execution on error
         }
         // Check if GOTO was executed (from GOTO, IF-THEN, NEXT, or
@@ -465,7 +465,7 @@ static double parse_print_statement(Parser* p) {
     } while (*p->s != '\0');
 
     safe_print("\n");  // End with newline
-    return 0.0;    // PRINT statements don't return meaningful values
+    return 0.0;        // PRINT statements don't return meaningful values
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 /* Parse and execute a GOTO statement */
@@ -1130,26 +1130,15 @@ static double parse_statement(Parser* p) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 void expr_init(void (*print_func)(const char* str)) {
-    // Set the print function
     print_function = print_func;
-    
-    // Clear all variables
     num_variables = 0;
-
-    // Clear all functions
     num_functions = 0;
     functions_initialized = 0;
-
-    // Clear program storage
     num_program_lines = 0;
-
-    // Reset control flow state
     goto_target = -1;
     for_stack_top = -1;
     current_line_index = -1;
     gosub_stack_top = -1;
-
-    // Initialize built-in functions
     init_builtin_functions();
     functions_initialized = 1;
 }
