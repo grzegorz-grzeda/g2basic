@@ -5,87 +5,144 @@
 #include <ctype.h>
 #include <math.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 /*--------------------------------------------------------------------------------------------------------------------*/
 #define MAX_FUNC_ARGS 8
-
+/*--------------------------------------------------------------------------------------------------------------------*/
+#define G2BASIC_KEYWORD_IF "IF"
+#define G2BASIC_KEYWORD_THEN "THEN"
+#define G2BASIC_KEYWORD_FOR "FOR"
+#define G2BASIC_KEYWORD_TO "TO"
+#define G2BASIC_KEYWORD_NEXT "NEXT"
+#define G2BASIC_KEYWORD_GOTO "GOTO"
+#define G2BASIC_KEYWORD_GOSUB "GOSUB"
+#define G2BASIC_KEYWORD_PRINT "PRINT"
+#define G2BASIC_KEYWORD_RETURN "RETURN"
+#define G2BASIC_KEYWORD_END "END"
+/*--------------------------------------------------------------------------------------------------------------------*/
 typedef struct Variable {
     char* name;  // Dynamically allocated variable name
     double value;
     struct Variable* next;  // Next variable in linked list
 } Variable;
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 typedef struct Function {
     char* name;     // Dynamically allocated function name
     int arg_count;  // Number of arguments (-1 for variadic)
     double (*func_ptr)(double args[], int count);
     struct Function* next;  // Next function in linked list
 } Function;
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 typedef struct ProgramLine {
     int line_number;
     char* text;                // Dynamically allocated program line text
     struct ProgramLine* next;  // Next program line in linked list
 } ProgramLine;
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 typedef struct ForLoop {
-    char* var_name;         // Dynamically allocated loop variable name
-    double start_value;     // Starting value
-    double end_value;       // Ending value
-    double step_value;      // Step increment (default 1)
-    int for_line_number;    // Line number of FOR statement
-    struct ForLoop* next;   // Next loop in the stack (linked list)
+    char* var_name;        // Dynamically allocated loop variable name
+    double start_value;    // Starting value
+    double end_value;      // Ending value
+    double step_value;     // Step increment (default 1)
+    int for_line_number;   // Line number of FOR statement
+    struct ForLoop* next;  // Next loop in the stack (linked list)
 } ForLoop;
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 typedef struct GosubStackEntry {
-    int return_line_number;         // Line number to return to
-    struct GosubStackEntry* next;   // Next entry in the stack (linked list)
+    int return_line_number;        // Line number to return to
+    struct GosubStackEntry* next;  // Next entry in the stack (linked list)
 } GosubStackEntry;
+/*--------------------------------------------------------------------------------------------------------------------*/
+static Variable* variables_head = NULL;   // Head of variables linked list
+static Function* functions_head = NULL;   // Head of functions linked list
+static ProgramLine* program_head = NULL;  // Head of program lines linked list
+static int goto_target = -1;  // Target line number for GOTO (-1 = no jump)
+static ForLoop* for_stack_head = NULL;  // Head of FOR loops stack (linked list)
+static int current_line_index = -1;     // Current executing line index
+static GosubStackEntry* gosub_stack_head =
+    NULL;  // Head of GOSUB stack (linked list)
 
-static Variable* variables_head = NULL;      // Head of variables linked list
-static Function* functions_head = NULL;      // Head of functions linked list
-static ProgramLine* program_head = NULL;     // Head of program lines linked list
-static int goto_target = -1;                 // Target line number for GOTO (-1 = no jump)
-static ForLoop* for_stack_head = NULL;       // Head of FOR loops stack (linked list)
-static int current_line_index = -1;          // Current executing line index
-static GosubStackEntry* gosub_stack_head = NULL;  // Head of GOSUB stack (linked list)
-
-// Print function pointer for output
-static void (*print_function)(const char* str) = NULL;
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 typedef struct {
     const char* start;  // beginning of the input (for position reporting)
     const char* s;      // current cursor
     const char* err;    // error message (NULL if ok)
 } Parser;
 /*--------------------------------------------------------------------------------------------------------------------*/
+typedef struct Keyword {
+    const char* word;
+    double (*parser_func)(Parser* p);
+} Keyword;
+/*--------------------------------------------------------------------------------------------------------------------*/
+static void (*print_function)(const char* str) = NULL;
+/*--------------------------------------------------------------------------------------------------------------------*/
 /* Forward declarations (grammar):
    statement := assignment | print_stmt | goto_stmt | if_stmt | for_stmt |
-   next_stmt | gosub_stmt | return_stmt | expr assignment := VARIABLE '=' expr
-   print_stmt := 'PRINT' expr_list goto_stmt := 'GOTO' NUMBER gosub_stmt :=
-   'GOSUB' NUMBER return_stmt := 'RETURN' if_stmt := 'IF' comparison 'THEN'
-   (NUMBER | statement) for_stmt := 'FOR' VARIABLE '=' expr 'TO' expr ['STEP'
-   expr] next_stmt := 'NEXT' VARIABLE comparison := expr
-   ('>'|'<'|'>='|'<='|'='|'<>') expr expr_list := expr (',' expr)* expr  := term
-   (('+'|'-') term)* term  := factor (('*'|'/') factor)* factor:= NUMBER |
-   VARIABLE | FUNCTION_CALL | '(' expr ')' | ('+'|'-') factor (unary)
-   function_call := IDENTIFIER '(' arg_list ')' arg_list := expr (',' expr)*
+   next_stmt | gosub_stmt | return_stmt | expr
+   assignment := VARIABLE '=' expr
+   print_stmt := 'PRINT' expr_list
+   goto_stmt := 'GOTO' NUMBER
+   gosub_stmt := 'GOSUB' NUMBER
+   return_stmt := 'RETURN'
+   if_stmt := 'IF' comparison 'THEN' (NUMBER | statement)
+   for_stmt := 'FOR' VARIABLE '=' expr 'TO' expr ['STEP' expr]
+   next_stmt := 'NEXT' VARIABLE
+   comparison := expr ('>'|'<'|'>='|'<='|'='|'<>') expr
+   expr_list := expr (',' expr)*
+   expr  := term (('+'|'-') term)*
+   term  := factor (('*'|'/') factor)*
+   factor := NUMBER | VARIABLE | FUNCTION_CALL | '(' expr ')' | ('+'|'-') factor
+   (unary)
+   function_call := IDENTIFIER '(' arg_list ')'
+   arg_list := expr (',' expr)*
 */
+/*--------------------------------------------------------------------------------------------------------------------*/
 static double parse_expr(Parser* p);
+/*--------------------------------------------------------------------------------------------------------------------*/
 static double parse_statement(Parser* p);
+/*--------------------------------------------------------------------------------------------------------------------*/
 static const char* skip_ws(const char* p);
 /*--------------------------------------------------------------------------------------------------------------------*/
-/* Helper function to safely call the print function */
+static const char* skip_word(const char* p, const char* word);
+/*--------------------------------------------------------------------------------------------------------------------*/
+static double parse_print_statement(Parser* p);
+/*--------------------------------------------------------------------------------------------------------------------*/
+static double parse_goto_statement(Parser* p);
+/*--------------------------------------------------------------------------------------------------------------------*/
+static double parse_if_statement(Parser* p);
+/*--------------------------------------------------------------------------------------------------------------------*/
+static double parse_for_statement(Parser* p);
+/*--------------------------------------------------------------------------------------------------------------------*/
+static double parse_next_statement(Parser* p);
+/*--------------------------------------------------------------------------------------------------------------------*/
+static double parse_gosub_statement(Parser* p);
+/*--------------------------------------------------------------------------------------------------------------------*/
+static double parse_return_statement(Parser* p);
+/*--------------------------------------------------------------------------------------------------------------------*/
+static double parse_end_statement(Parser* p);
+/*--------------------------------------------------------------------------------------------------------------------*/
+static const Keyword keywords[] = {
+    {G2BASIC_KEYWORD_PRINT, parse_print_statement},
+    {G2BASIC_KEYWORD_GOTO, parse_goto_statement},
+    {G2BASIC_KEYWORD_IF, parse_if_statement},
+    {G2BASIC_KEYWORD_FOR, parse_for_statement},
+    {G2BASIC_KEYWORD_NEXT, parse_next_statement},
+    {G2BASIC_KEYWORD_GOSUB, parse_gosub_statement},
+    {G2BASIC_KEYWORD_RETURN, parse_return_statement},
+    {G2BASIC_KEYWORD_END, parse_end_statement},
+    {NULL, NULL}  // Sentinel
+};
+/*--------------------------------------------------------------------------------------------------------------------*/
 static void safe_print(const char* str) {
     if (print_function != NULL) {
         print_function(str);
     }
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-/* Helper function for formatted printing */
 static void safe_printf(const char* format, ...) {
     if (print_function != NULL) {
         char buffer[512];
@@ -105,13 +162,11 @@ static int is_alnum_or_underscore(char c) {
     return isalnum((unsigned char)c) || c == '_';
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-/* Parse an identifier (variable name, function name) dynamically */
 static char* parse_identifier(Parser* p) {
     if (!is_alpha_or_underscore(*p->s)) {
-        return NULL;  // Not an identifier
+        return NULL;
     }
 
-    // First pass: count the length
     const char* start = p->s;
     const char* end = p->s;
     while (is_alnum_or_underscore(*end)) {
@@ -123,17 +178,13 @@ static char* parse_identifier(Parser* p) {
         return NULL;
     }
 
-    // Allocate memory for the identifier
     char* identifier = (char*)calloc(len + 1, sizeof(char));
     if (identifier == NULL) {
-        return NULL;  // Memory allocation failed
+        return NULL;
     }
 
-    // Copy the identifier
     strncpy(identifier, start, len);
     identifier[len] = '\0';
-
-    // Advance the parser
     p->s = end;
 
     return identifier;
@@ -147,11 +198,10 @@ static double get_variable(const char* name) {
         }
         current = current->next;
     }
-    return NAN;  // Variable not found
+    return NAN;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void set_variable(const char* name, double value) {
-    // First try to find existing variable
     Variable* current = variables_head;
     while (current != NULL) {
         if (strcmp(current->name, name) == 0) {
@@ -161,10 +211,9 @@ static void set_variable(const char* name, double value) {
         current = current->next;
     }
 
-    // Variable not found, create new one
     Variable* new_var = (Variable*)calloc(1, sizeof(Variable));
     if (new_var == NULL) {
-        return;  // Memory allocation failed
+        return;
     }
 
     // Allocate memory for name
@@ -185,8 +234,8 @@ static void clear_all_variables(void) {
     while (current != NULL) {
         Variable* to_delete = current;
         current = current->next;
-        free(to_delete->name);  // Free the dynamically allocated name
-        free(to_delete);        // Free the variable structure
+        free(to_delete->name);
+        free(to_delete);
     }
     variables_head = NULL;
 }
@@ -196,8 +245,8 @@ static void clear_all_functions(void) {
     while (current != NULL) {
         Function* to_delete = current;
         current = current->next;
-        free(to_delete->name);  // Free the dynamically allocated name
-        free(to_delete);        // Free the function structure
+        free(to_delete->name);
+        free(to_delete);
     }
     functions_head = NULL;
 }
@@ -207,14 +256,13 @@ static void clear_all_program_lines(void) {
     while (current != NULL) {
         ProgramLine* to_delete = current;
         current = current->next;
-        free(to_delete->text);  // Free the dynamically allocated text
-        free(to_delete);        // Free the program line structure
+        free(to_delete->text);
+        free(to_delete);
     }
     program_head = NULL;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void clear_all_for_loops(void) {
-    // Free all FOR loops in the linked list
     ForLoop* current = for_stack_head;
     while (current != NULL) {
         ForLoop* next = current->next;
@@ -228,7 +276,6 @@ static void clear_all_for_loops(void) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void clear_all_gosub_stack(void) {
-    // Free all GOSUB stack entries in the linked list
     GosubStackEntry* current = gosub_stack_head;
     while (current != NULL) {
         GosubStackEntry* next = current->next;
@@ -253,18 +300,16 @@ static ProgramLine* find_next_program_line(int line_number) {
     ProgramLine* current = program_head;
     while (current != NULL) {
         if (current->line_number > line_number) {
-            return current;  // Found first line after the given line number
+            return current;
         }
         current = current->next;
     }
-    return NULL;  // No line found after the given line number
+    return NULL;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void insert_program_line_sorted(int line_number, const char* text) {
-    // Remove existing line with same number if it exists
     ProgramLine* existing = find_program_line(line_number);
     if (existing != NULL) {
-        // Remove from list
         if (existing == program_head) {
             program_head = existing->next;
         } else {
@@ -278,21 +323,19 @@ static void insert_program_line_sorted(int line_number, const char* text) {
         free(existing);
     }
 
-    // Create new program line
     ProgramLine* new_line = (ProgramLine*)calloc(1, sizeof(ProgramLine));
     if (new_line == NULL) {
-        return;  // Memory allocation failed
+        return;
     }
 
     new_line->line_number = line_number;
     new_line->text = (char*)calloc(strlen(text) + 1, sizeof(char));
     if (new_line->text == NULL) {
         free(new_line);
-        return;  // Memory allocation failed
+        return;
     }
     strcpy(new_line->text, text);
 
-    // Insert in sorted order
     if (program_head == NULL || program_head->line_number > line_number) {
         new_line->next = program_head;
         program_head = new_line;
@@ -322,33 +365,29 @@ static int register_function(const char* name,
                              int arg_count,
                              double (*func_ptr)(double[], int)) {
     if (find_function(name) != NULL) {
-        return -1;  // Function already exists
+        return -1;
     }
 
-    // Allocate new function node
     Function* new_func = (Function*)calloc(1, sizeof(Function));
     if (new_func == NULL) {
-        return -1;  // Memory allocation failed
+        return -1;
     }
 
-    // Allocate memory for function name
     new_func->name = (char*)calloc(strlen(name) + 1, sizeof(char));
     if (new_func->name == NULL) {
         free(new_func);
-        return -1;  // Memory allocation failed
+        return -1;
     }
 
-    // Set function properties
     strcpy(new_func->name, name);
     new_func->arg_count = arg_count;
     new_func->func_ptr = func_ptr;
     new_func->next = NULL;
 
-    // Add to front of linked list
     new_func->next = functions_head;
     functions_head = new_func;
 
-    return 0;  // Success
+    return 0;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static double func_sin(double args[], int count) {
@@ -457,19 +496,17 @@ static void init_builtin_functions(void) {
     register_function("exp", 1, func_exp);
     register_function("floor", 1, func_floor);
     register_function("ceil", 1, func_ceil);
-    register_function("min", -1, func_min);  // Variadic
-    register_function("max", -1, func_max);  // Variadic
+    register_function("min", -1, func_min);
+    register_function("max", -1, func_max);
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 /*--------------------------------------------------------------------------------------------------------------------*/
-/* Program line management functions (now using linked list) */
 static void delete_program_line(int line_number) {
     ProgramLine* to_delete = find_program_line(line_number);
     if (to_delete == NULL) {
         return;  // Line not found
     }
 
-    // Remove from list
     if (to_delete == program_head) {
         program_head = to_delete->next;
     } else {
@@ -501,26 +538,19 @@ static void insert_program_line(int line_number, const char* text) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static int run_program(void) {
-    goto_target = -1;       // Reset GOTO target
-    clear_all_for_loops();  // Reset FOR stack with proper cleanup
-    clear_all_gosub_stack(); // Reset GOSUB stack
+    goto_target = -1;
+    clear_all_for_loops();
+    clear_all_gosub_stack();
 
     ProgramLine* current_line = program_head;
 
     while (current_line != NULL) {
-        // Track current line for FOR loops (we'll need to adapt this)
-        current_line_index =
-            current_line->line_number;  // Use line number as identifier
+        current_line_index = current_line->line_number;
         double result;
 
-        // Update FOR stack with current line index
         const char* p = current_line->text;
-        while (isspace((unsigned char)*p))
+        while (isspace((unsigned char)*p)) {
             p++;
-
-        if (strncmp(p, "FOR", 3) == 0 &&
-            (isspace((unsigned char)p[3]) || p[3] == '\0')) {
-            // About to execute a FOR statement, prepare to update stack
         }
 
         const char* error = NULL;
@@ -528,19 +558,16 @@ static int run_program(void) {
         if (ret != 0) {
             safe_printf("Error in line %d: %s\n", current_line->line_number,
                         error ? error : "Unknown error");
-            return -1;  // Stop execution on error
+            return -1;
         }
 
         // Check if GOTO was executed (from GOTO, IF-THEN, NEXT, or
         // GOSUB/RETURN)
         if (goto_target != -1) {
-            // Check for special end-of-program value
             if (goto_target == -2) {
-                // RETURN past end of program - stop execution
                 break;
             }
 
-            // Find the target line
             ProgramLine* target_line = find_program_line(goto_target);
             if (target_line == NULL) {
                 safe_printf("Error: line %d not found\n", goto_target);
@@ -557,50 +584,47 @@ static int run_program(void) {
     return 0;  // Success
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-/* Handle special BASIC commands */
-static int handle_basic_command(const char* input) {
-    const char* p = input;
-
-    // Skip leading whitespace
-    while (isspace((unsigned char)*p))
-        p++;
-
-    if (strncmp(p, "LIST", 4) == 0 &&
-        (isspace((unsigned char)p[4]) || p[4] == '\0')) {
-        list_program();
-        return 1;  // Command handled
+static bool is_keyword(const char* input, const char* command) {
+    const char* p = skip_ws(input);
+    size_t cmd_len = strlen(command);
+    size_t i;
+    for (i = 0; i < cmd_len; ++i) {
+        if (tolower((unsigned char)p[i]) !=
+            tolower((unsigned char)command[i])) {
+            break;
+        }
     }
-
-    if (strncmp(p, "RUN", 3) == 0 &&
-        (isspace((unsigned char)p[3]) || p[3] == '\0')) {
-        run_program();
-        return 1;  // Command handled
-    }
-
-    if (strncmp(p, "NEW", 3) == 0 &&
-        (isspace((unsigned char)p[3]) || p[3] == '\0')) {
-        clear_program();
-        safe_print("Program cleared\n");
-        return 1;  // Command handled
-    }
-
-    return 0;  // Not a special command
+    return (i == cmd_len &&
+            (isspace((unsigned char)p[cmd_len]) || p[cmd_len] == '\0'));
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-/* Parse and execute a PRINT statement */
+static bool handle_basic_command(const char* input) {
+    const char* p = skip_ws(input);
+
+    if (is_keyword(p, "LIST")) {
+        list_program();
+        return true;
+    }
+
+    if (is_keyword(p, "RUN")) {
+        run_program();
+        return true;
+    }
+
+    if (is_keyword(p, "NEW")) {
+        clear_program();
+        return true;
+    }
+
+    return false;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
 static double parse_print_statement(Parser* p) {
-    // Skip the "PRINT" keyword (already matched)
-    p->s += 5;  // Skip "PRINT"
-
-    p->s = skip_ws(p->s);
-
-    // Handle empty PRINT (just print newline)
     if (*p->s == '\0') {
         safe_print("\n");
         return 0.0;
     }
 
-    // Parse and print expressions separated by commas
     int first = 1;
     do {
         if (!first) {
@@ -629,14 +653,7 @@ static double parse_print_statement(Parser* p) {
     return 0.0;        // PRINT statements don't return meaningful values
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-/* Parse and execute a GOTO statement */
 static double parse_goto_statement(Parser* p) {
-    // Skip the "GOTO" keyword (already matched)
-    p->s += 4;  // Skip "GOTO"
-
-    p->s = skip_ws(p->s);
-
-    // Parse the target line number
     if (!isdigit((unsigned char)*p->s)) {
         p->err = "GOTO requires a line number";
         return NAN;
@@ -658,7 +675,6 @@ static double parse_goto_statement(Parser* p) {
     return 0.0;  // GOTO statements don't return meaningful values
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-/* Parse a comparison (expr op expr) and return 1.0 for true, 0.0 for false */
 static double parse_comparison(Parser* p) {
     double left = parse_expr(p);
     if (p->err)
@@ -704,14 +720,7 @@ static double parse_comparison(Parser* p) {
     }
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-/* Parse and execute an IF statement */
 static double parse_if_statement(Parser* p) {
-    // Skip the "IF" keyword (already matched)
-    p->s += 2;  // Skip "IF"
-
-    p->s = skip_ws(p->s);
-
-    // Parse the condition
     double condition = parse_comparison(p);
     if (p->err)
         return NAN;
@@ -719,12 +728,11 @@ static double parse_if_statement(Parser* p) {
     p->s = skip_ws(p->s);
 
     // Expect THEN keyword
-    if (strncmp(p->s, "THEN", 4) != 0) {
+    if (!is_keyword(p->s, G2BASIC_KEYWORD_THEN)) {
         p->err = "expected THEN after IF condition";
         return NAN;
     }
-    p->s += 4;  // Skip "THEN"
-
+    p->s = skip_word(p->s, G2BASIC_KEYWORD_THEN);
     p->s = skip_ws(p->s);
 
     // Check if condition is true (non-zero)
@@ -746,7 +754,6 @@ static double parse_if_statement(Parser* p) {
             goto_target = (int)target_line;
             return 0.0;
         } else {
-            // Parse and execute statement
             return parse_statement(p);
         }
     } else {
@@ -758,14 +765,7 @@ static double parse_if_statement(Parser* p) {
     }
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-/* Parse and execute a FOR statement */
 static double parse_for_statement(Parser* p) {
-    // Skip the "FOR" keyword (already matched)
-    p->s += 3;  // Skip "FOR"
-
-    p->s = skip_ws(p->s);
-
-    // Parse variable name
     if (!is_alpha_or_underscore(*p->s)) {
         p->err = "expected variable name after FOR";
         return NAN;
@@ -797,7 +797,7 @@ static double parse_for_statement(Parser* p) {
     p->s = skip_ws(p->s);
 
     // Expect TO
-    if (strncmp(p->s, "TO", 2) != 0) {
+    if (!is_keyword(p->s, "TO")) {
         p->err = "expected TO after FOR start value";
         free(var_name);
         return NAN;
@@ -815,8 +815,7 @@ static double parse_for_statement(Parser* p) {
 
     // Check for optional STEP
     double step_val = 1.0;
-    if (strncmp(p->s, "STEP", 4) == 0 &&
-        (isspace((unsigned char)p->s[4]) || p->s[4] == '\0')) {
+    if (is_keyword(p->s, "STEP")) {
         p->s += 4;
         step_val = parse_expr(p);
         if (p->err) {
@@ -847,8 +846,9 @@ static double parse_for_statement(Parser* p) {
     loop->start_value = start_val;
     loop->end_value = end_val;
     loop->step_value = step_val;
-    loop->for_line_number = current_line_index;  // Use current executing line number
-    
+    loop->for_line_number =
+        current_line_index;  // Use current executing line number
+
     // Push to head of linked list (stack behavior)
     loop->next = for_stack_head;
     for_stack_head = loop;
@@ -862,14 +862,7 @@ static double parse_for_statement(Parser* p) {
     return 0.0;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-/* Parse and execute a NEXT statement */
 static double parse_next_statement(Parser* p) {
-    // Skip the "NEXT" keyword (already matched)
-    p->s += 4;  // Skip "NEXT"
-
-    p->s = skip_ws(p->s);
-
-    // Parse variable name
     if (!is_alpha_or_underscore(*p->s)) {
         p->err = "expected variable name after NEXT";
         return NAN;
@@ -938,14 +931,7 @@ static double parse_next_statement(Parser* p) {
     return 0.0;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-/* Parse and execute a GOSUB statement */
 static double parse_gosub_statement(Parser* p) {
-    // Skip the "GOSUB" keyword (already matched)
-    p->s += 5;  // Skip "GOSUB"
-
-    p->s = skip_ws(p->s);
-
-    // Parse the target line number
     if (!isdigit((unsigned char)*p->s)) {
         p->err = "GOSUB requires a line number";
         return NAN;
@@ -961,44 +947,33 @@ static double parse_gosub_statement(Parser* p) {
 
     p->s = endptr;
 
-    // Create new GOSUB stack entry
-    GosubStackEntry* entry = (GosubStackEntry*)calloc(1, sizeof(GosubStackEntry));
+    GosubStackEntry* entry =
+        (GosubStackEntry*)calloc(1, sizeof(GosubStackEntry));
     if (entry == NULL) {
         p->err = "memory allocation failed for GOSUB stack";
         return NAN;
     }
 
-    // Store the line number of the next line
     ProgramLine* next_line = find_next_program_line(current_line_index);
     if (next_line != NULL) {
         entry->return_line_number = next_line->line_number;
     } else {
-        // No next line - mark as end of program
         entry->return_line_number = -2;
     }
 
-    // Push to head of linked list (stack behavior)
     entry->next = gosub_stack_head;
     gosub_stack_head = entry;
-
-    // Set the goto target
     goto_target = (int)target_line;
 
     return 0.0;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-/* Parse and execute a RETURN statement */
 static double parse_return_statement(Parser* p) {
-    // Skip the "RETURN" keyword (already matched)
-    p->s += 6;  // Skip "RETURN"
-
-    // Check if there's a matching GOSUB
     if (gosub_stack_head == NULL) {
         p->err = "RETURN without matching GOSUB";
         return NAN;
     }
 
-    // Pop return address from stack
     GosubStackEntry* entry = gosub_stack_head;
     int return_line_number = entry->return_line_number;
     gosub_stack_head = entry->next;
@@ -1015,12 +990,7 @@ static double parse_return_statement(Parser* p) {
     return 0.0;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-/* Parse and execute an END statement */
 static double parse_end_statement(Parser* p) {
-    // Skip the "END" keyword (already matched)
-    p->s += 3;  // Skip "END"
-
-    // Set goto target to special end-of-program value
     goto_target = -2;  // Special value to indicate end of program
 
     return 0.0;
@@ -1031,6 +1001,11 @@ static const char* skip_ws(const char* p) {
         p++;
     }
     return p;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+static const char* skip_word(const char* p, const char* word) {
+    size_t len = strlen(word);
+    return p + len;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static int accept(Parser* p, char c) {
@@ -1168,25 +1143,20 @@ static double parse_factor(Parser* p) {
         return v;
     }
 
-    // Try to parse as identifier (variable or function call)
     if (is_alpha_or_underscore(*p->s)) {
-        // Parse the identifier name
         const char* start = p->s;
         char* identifier = parse_identifier(p);
         if (identifier == NULL) {
             p->err = "failed to parse identifier or memory allocation failed";
             return NAN;
         }
-
         p->s = skip_ws(p->s);
 
-        // Check if it's a function call (followed by '(')
         if (*p->s == '(') {
             double result = parse_function_call(p, identifier);
             free(identifier);
             return result;
         } else {
-            // It's a variable, restore position and parse as variable
             free(identifier);
             p->s = start;
             return parse_variable(p);
@@ -1241,58 +1211,16 @@ static double parse_expr(Parser* p) {
 static double parse_statement(Parser* p) {
     p->s = skip_ws(p->s);
 
-    // Check for PRINT statement
-    if (strncmp(p->s, "PRINT", 5) == 0 &&
-        (isspace((unsigned char)p->s[5]) || p->s[5] == '\0')) {
-        return parse_print_statement(p);
-    }
-
-    // Check for GOTO statement
-    if (strncmp(p->s, "GOTO", 4) == 0 &&
-        (isspace((unsigned char)p->s[4]) || p->s[4] == '\0')) {
-        return parse_goto_statement(p);
-    }
-
-    // Check for IF statement
-    if (strncmp(p->s, "IF", 2) == 0 &&
-        (isspace((unsigned char)p->s[2]) || p->s[2] == '\0')) {
-        return parse_if_statement(p);
-    }
-
-    // Check for FOR statement
-    if (strncmp(p->s, "FOR", 3) == 0 &&
-        (isspace((unsigned char)p->s[3]) || p->s[3] == '\0')) {
-        return parse_for_statement(p);
-    }
-
-    // Check for NEXT statement
-    if (strncmp(p->s, "NEXT", 4) == 0 &&
-        (isspace((unsigned char)p->s[4]) || p->s[4] == '\0')) {
-        return parse_next_statement(p);
-    }
-
-    // Check for GOSUB statement
-    if (strncmp(p->s, "GOSUB", 5) == 0 &&
-        (isspace((unsigned char)p->s[5]) || p->s[5] == '\0')) {
-        return parse_gosub_statement(p);
-    }
-
-    // Check for RETURN statement
-    if (strncmp(p->s, "RETURN", 6) == 0 &&
-        (isspace((unsigned char)p->s[6]) || p->s[6] == '\0')) {
-        return parse_return_statement(p);
-    }
-
-    // Check for END statement
-    if (strncmp(p->s, "END", 3) == 0 &&
-        (isspace((unsigned char)p->s[3]) || p->s[3] == '\0')) {
-        return parse_end_statement(p);
+    for (const Keyword* kw = keywords; kw->word != NULL; kw++) {
+        if (is_keyword(p->s, kw->word)) {
+            p->s = skip_word(p->s, kw->word);
+            p->s = skip_ws(p->s);
+            return kw->parser_func(p);
+        }
     }
 
     // Check if this looks like an assignment (variable = ...)
     const char* saved_pos = p->s;
-
-    // Try to parse a variable name
     if (is_alpha_or_underscore(*p->s)) {
         char* var_name = parse_identifier(p);
         if (var_name == NULL) {
@@ -1300,31 +1228,25 @@ static double parse_statement(Parser* p) {
                 "failed to parse variable name or memory allocation failed";
             return NAN;
         }
-
         p->s = skip_ws(p->s);
 
-        // Check if followed by '='
         if (*p->s == '=') {
             p->s++;  // consume '='
 
-            // Parse the expression on the right side
             double value = parse_expr(p);
             if (p->err) {
                 free(var_name);
                 return value;
             }
 
-            // Set the variable
             set_variable(var_name, value);
             free(var_name);
             return value;
         } else {
-            // Not an assignment, free the variable name and restore position
             free(var_name);
         }
     }
 
-    // Not an assignment, restore position and parse as expression
     p->s = saved_pos;
     return parse_expr(p);
 }
