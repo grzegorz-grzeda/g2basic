@@ -11,8 +11,6 @@
 #include <string.h>
 /*--------------------------------------------------------------------------------------------------------------------*/
 #define MAX_VAR_NAME 32
-#define MAX_FUNCTIONS 100
-#define MAX_FUNC_NAME 32
 #define MAX_FUNC_ARGS 8
 #define MAX_PROGRAM_LINES 1000
 #define MAX_LINE_LENGTH 256
@@ -25,10 +23,11 @@ typedef struct Variable {
     struct Variable* next;  // Next variable in linked list
 } Variable;
 
-typedef struct {
-    char name[MAX_FUNC_NAME];
+typedef struct Function {
+    char* name;     // Dynamically allocated function name
     int arg_count;  // Number of arguments (-1 for variadic)
     double (*func_ptr)(double args[], int count);
+    struct Function* next;  // Next function in linked list
 } Function;
 
 typedef struct {
@@ -46,9 +45,7 @@ typedef struct {
 } ForLoop;
 
 static Variable* variables_head = NULL;  // Head of variables linked list
-static Function functions[MAX_FUNCTIONS];
-static int num_functions = 0;
-static int functions_initialized = 0;
+static Function* functions_head = NULL;  // Head of functions linked list
 static ProgramLine program[MAX_PROGRAM_LINES];
 static int num_program_lines = 0;
 static int goto_target = -1;  // Target line number for GOTO (-1 = no jump)
@@ -163,11 +160,24 @@ static void clear_all_variables(void) {
     variables_head = NULL;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
+static void clear_all_functions(void) {
+    Function* current = functions_head;
+    while (current != NULL) {
+        Function* to_delete = current;
+        current = current->next;
+        free(to_delete->name);  // Free the dynamically allocated name
+        free(to_delete);        // Free the function structure
+    }
+    functions_head = NULL;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
 static Function* find_function(const char* name) {
-    for (int i = 0; i < num_functions; i++) {
-        if (strcmp(functions[i].name, name) == 0) {
-            return &functions[i];
+    Function* current = functions_head;
+    while (current != NULL) {
+        if (strcmp(current->name, name) == 0) {
+            return current;
         }
+        current = current->next;
     }
     return NULL;
 }
@@ -179,16 +189,30 @@ static int register_function(const char* name,
         return -1;  // Function already exists
     }
 
-    if (num_functions < MAX_FUNCTIONS) {
-        strncpy(functions[num_functions].name, name, MAX_FUNC_NAME - 1);
-        functions[num_functions].name[MAX_FUNC_NAME - 1] = '\0';
-        functions[num_functions].arg_count = arg_count;
-        functions[num_functions].func_ptr = func_ptr;
-        num_functions++;
-        return 0;  // Success
+    // Allocate new function node
+    Function* new_func = (Function*)calloc(1, sizeof(Function));
+    if (new_func == NULL) {
+        return -1;  // Memory allocation failed
     }
 
-    return -1;  // No space for more functions
+    // Allocate memory for function name
+    new_func->name = (char*)calloc(strlen(name) + 1, sizeof(char));
+    if (new_func->name == NULL) {
+        free(new_func);
+        return -1;  // Memory allocation failed
+    }
+
+    // Set function properties
+    strcpy(new_func->name, name);
+    new_func->arg_count = arg_count;
+    new_func->func_ptr = func_ptr;
+    new_func->next = NULL;
+
+    // Add to front of linked list
+    new_func->next = functions_head;
+    functions_head = new_func;
+
+    return 0;  // Success
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static double func_sin(double args[], int count) {
@@ -1158,18 +1182,15 @@ static double parse_statement(Parser* p) {
 void expr_init(void (*print_func)(const char* str)) {
     print_function = print_func;
 
-    // Clear all variables
     clear_all_variables();
+    clear_all_functions();
 
-    num_functions = 0;
-    functions_initialized = 0;
     num_program_lines = 0;
     goto_target = -1;
     for_stack_top = -1;
     current_line_index = -1;
     gosub_stack_top = -1;
     init_builtin_functions();
-    functions_initialized = 1;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 int expr_eval(const char* expr, double* result, const char** error) {
