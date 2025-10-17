@@ -12,7 +12,6 @@
 /*--------------------------------------------------------------------------------------------------------------------*/
 #define MAX_VAR_NAME 32
 #define MAX_FUNC_ARGS 8
-#define MAX_PROGRAM_LINES 1000
 #define MAX_LINE_LENGTH 256
 #define MAX_FOR_LOOPS 10
 #define MAX_GOSUB_STACK 20
@@ -30,9 +29,10 @@ typedef struct Function {
     struct Function* next;  // Next function in linked list
 } Function;
 
-typedef struct {
+typedef struct ProgramLine {
     int line_number;
-    char text[MAX_LINE_LENGTH];
+    char* text;                // Dynamically allocated program line text
+    struct ProgramLine* next;  // Next program line in linked list
 } ProgramLine;
 
 typedef struct {
@@ -40,14 +40,13 @@ typedef struct {
     double start_value;           // Starting value
     double end_value;             // Ending value
     double step_value;            // Step increment (default 1)
-    int for_line_index;           // Index of FOR statement line
-    int next_line_index;  // Index of NEXT statement line (-1 if not found)
+    int for_line_number;          // Line number of FOR statement
+    int next_line_number;  // Line number of NEXT statement (-1 if not found)
 } ForLoop;
 
-static Variable* variables_head = NULL;  // Head of variables linked list
-static Function* functions_head = NULL;  // Head of functions linked list
-static ProgramLine program[MAX_PROGRAM_LINES];
-static int num_program_lines = 0;
+static Variable* variables_head = NULL;   // Head of variables linked list
+static Function* functions_head = NULL;   // Head of functions linked list
+static ProgramLine* program_head = NULL;  // Head of program lines linked list
 static int goto_target = -1;  // Target line number for GOTO (-1 = no jump)
 static ForLoop for_stack[MAX_FOR_LOOPS];  // Stack for nested FOR loops
 static int for_stack_top = -1;            // Top of FOR stack (-1 = empty)
@@ -169,6 +168,86 @@ static void clear_all_functions(void) {
         free(to_delete);        // Free the function structure
     }
     functions_head = NULL;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+static void clear_all_program_lines(void) {
+    ProgramLine* current = program_head;
+    while (current != NULL) {
+        ProgramLine* to_delete = current;
+        current = current->next;
+        free(to_delete->text);  // Free the dynamically allocated text
+        free(to_delete);        // Free the program line structure
+    }
+    program_head = NULL;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+static ProgramLine* find_program_line(int line_number) {
+    ProgramLine* current = program_head;
+    while (current != NULL) {
+        if (current->line_number == line_number) {
+            return current;
+        }
+        current = current->next;
+    }
+    return NULL;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+static ProgramLine* find_next_program_line(int line_number) {
+    ProgramLine* current = program_head;
+    while (current != NULL) {
+        if (current->line_number > line_number) {
+            return current;  // Found first line after the given line number
+        }
+        current = current->next;
+    }
+    return NULL;  // No line found after the given line number
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+static void insert_program_line_sorted(int line_number, const char* text) {
+    // Remove existing line with same number if it exists
+    ProgramLine* existing = find_program_line(line_number);
+    if (existing != NULL) {
+        // Remove from list
+        if (existing == program_head) {
+            program_head = existing->next;
+        } else {
+            ProgramLine* prev = program_head;
+            while (prev->next != existing) {
+                prev = prev->next;
+            }
+            prev->next = existing->next;
+        }
+        free(existing->text);
+        free(existing);
+    }
+
+    // Create new program line
+    ProgramLine* new_line = (ProgramLine*)calloc(1, sizeof(ProgramLine));
+    if (new_line == NULL) {
+        return;  // Memory allocation failed
+    }
+
+    new_line->line_number = line_number;
+    new_line->text = (char*)calloc(strlen(text) + 1, sizeof(char));
+    if (new_line->text == NULL) {
+        free(new_line);
+        return;  // Memory allocation failed
+    }
+    strcpy(new_line->text, text);
+
+    // Insert in sorted order
+    if (program_head == NULL || program_head->line_number > line_number) {
+        new_line->next = program_head;
+        program_head = new_line;
+    } else {
+        ProgramLine* current = program_head;
+        while (current->next != NULL &&
+               current->next->line_number < line_number) {
+            current = current->next;
+        }
+        new_line->next = current->next;
+        current->next = new_line;
+    }
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static Function* find_function(const char* name) {
@@ -325,66 +404,43 @@ static void init_builtin_functions(void) {
     register_function("max", -1, func_max);  // Variadic
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-static int find_line_index(int line_number) {
-    for (int i = 0; i < num_program_lines; i++) {
-        if (program[i].line_number == line_number) {
-            return i;
-        }
-        if (program[i].line_number > line_number) {
-            return -1;  // Line not found, would be inserted here
-        }
-    }
-    return -1;  // Line not found, would be inserted at end
-}
 /*--------------------------------------------------------------------------------------------------------------------*/
-static void insert_program_line(int line_number, const char* text) {
-    int insert_pos = num_program_lines;
-    for (int i = 0; i < num_program_lines; i++) {
-        if (program[i].line_number == line_number) {
-            strncpy(program[i].text, text, MAX_LINE_LENGTH - 1);
-            program[i].text[MAX_LINE_LENGTH - 1] = '\0';
-            return;
-        }
-        if (program[i].line_number > line_number) {
-            insert_pos = i;
-            break;
-        }
-    }
-
-    if (num_program_lines >= MAX_PROGRAM_LINES) {
-        return;  // No space for more lines
-    }
-
-    for (int i = num_program_lines; i > insert_pos; i--) {
-        program[i] = program[i - 1];
-    }
-
-    program[insert_pos].line_number = line_number;
-    strncpy(program[insert_pos].text, text, MAX_LINE_LENGTH - 1);
-    program[insert_pos].text[MAX_LINE_LENGTH - 1] = '\0';
-    num_program_lines++;
-}
-/*--------------------------------------------------------------------------------------------------------------------*/
+/* Program line management functions (now using linked list) */
 static void delete_program_line(int line_number) {
-    int index = find_line_index(line_number);
-    if (index < 0 || program[index].line_number != line_number) {
+    ProgramLine* to_delete = find_program_line(line_number);
+    if (to_delete == NULL) {
         return;  // Line not found
     }
 
-    for (int i = index; i < num_program_lines - 1; i++) {
-        program[i] = program[i + 1];
+    // Remove from list
+    if (to_delete == program_head) {
+        program_head = to_delete->next;
+    } else {
+        ProgramLine* prev = program_head;
+        while (prev->next != to_delete) {
+            prev = prev->next;
+        }
+        prev->next = to_delete->next;
     }
-    num_program_lines--;
+
+    free(to_delete->text);
+    free(to_delete);
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void clear_program(void) {
-    num_program_lines = 0;
+    clear_all_program_lines();
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void list_program(void) {
-    for (int i = 0; i < num_program_lines; i++) {
-        safe_printf("%d %s\n", program[i].line_number, program[i].text);
+    ProgramLine* current = program_head;
+    while (current != NULL) {
+        safe_printf("%d %s\n", current->line_number, current->text);
+        current = current->next;
     }
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+static void insert_program_line(int line_number, const char* text) {
+    insert_program_line_sorted(line_number, text);
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static int run_program(void) {
@@ -392,13 +448,16 @@ static int run_program(void) {
     for_stack_top = -1;    // Reset FOR stack
     gosub_stack_top = -1;  // Reset GOSUB stack
 
-    int i = 0;
-    while (i < num_program_lines) {
-        current_line_index = i;  // Track current line for FOR loops
+    ProgramLine* current_line = program_head;
+
+    while (current_line != NULL) {
+        // Track current line for FOR loops (we'll need to adapt this)
+        current_line_index =
+            current_line->line_number;  // Use line number as identifier
         double result;
 
         // Update FOR stack with current line index
-        const char* p = program[i].text;
+        const char* p = current_line->text;
         while (isspace((unsigned char)*p))
             p++;
 
@@ -408,12 +467,13 @@ static int run_program(void) {
         }
 
         const char* error = NULL;
-        int ret = expr_eval(program[i].text, &result, &error);
+        int ret = expr_eval(current_line->text, &result, &error);
         if (ret != 0) {
-            safe_printf("Error in line %d: %s\n", program[i].line_number,
+            safe_printf("Error in line %d: %s\n", current_line->line_number,
                         error ? error : "Unknown error");
             return -1;  // Stop execution on error
         }
+
         // Check if GOTO was executed (from GOTO, IF-THEN, NEXT, or
         // GOSUB/RETURN)
         if (goto_target != -1) {
@@ -424,25 +484,18 @@ static int run_program(void) {
             }
 
             // Find the target line
-            int target_index = -1;
-            for (int j = 0; j < num_program_lines; j++) {
-                if (program[j].line_number == goto_target) {
-                    target_index = j;
-                    break;
-                }
-            }
-
-            if (target_index == -1) {
+            ProgramLine* target_line = find_program_line(goto_target);
+            if (target_line == NULL) {
                 safe_printf("Error: line %d not found\n", goto_target);
                 return -1;
             }
 
-            goto_target = -1;  // Reset GOTO target
-            i = target_index;  // Jump to target line
+            goto_target = -1;            // Reset GOTO target
+            current_line = target_line;  // Jump to target line
             continue;
         }
 
-        i++;  // Move to next line
+        current_line = current_line->next;  // Move to next line
     }
     return 0;  // Success
 }
@@ -500,6 +553,7 @@ static double parse_print_statement(Parser* p) {
 
         double value = parse_expr(p);
         if (p->err) {
+            printf("!\n");
             return NAN;
         }
 
@@ -721,8 +775,9 @@ static double parse_for_statement(Parser* p) {
     loop->start_value = start_val;
     loop->end_value = end_val;
     loop->step_value = step_val;
-    loop->for_line_index = current_line_index;  // Use current executing line
-    loop->next_line_index = -1;
+    loop->for_line_number =
+        current_line_index;  // Use current executing line number
+    loop->next_line_number = -1;
 
     // Set the loop variable to start value
     set_variable(var_name, start_val);
@@ -782,11 +837,13 @@ static double parse_next_statement(Parser* p) {
     if (continue_loop) {
         // Update variable and jump back to the line AFTER the FOR statement
         set_variable(var_name, current_val);
-        if (loop->for_line_index >= 0 &&
-            loop->for_line_index < num_program_lines - 1) {
-            // Jump to the line after the FOR statement
-            goto_target = program[loop->for_line_index + 1].line_number;
+
+        // Find the next line after the FOR statement
+        ProgramLine* next_line = find_next_program_line(loop->for_line_number);
+        if (next_line != NULL) {
+            goto_target = next_line->line_number;
         }
+        // If no next line found, continue to end of program
     } else {
         // Loop finished, pop from stack
         for_stack_top--;
@@ -826,10 +883,10 @@ static double parse_gosub_statement(Parser* p) {
 
     // Push current line index + 1 (return address) onto GOSUB stack
     gosub_stack_top++;
-    // Store the line number of the next line (not the array index)
-    if (current_line_index + 1 < num_program_lines) {
-        gosub_stack[gosub_stack_top] =
-            program[current_line_index + 1].line_number;
+    // Store the line number of the next line
+    ProgramLine* next_line = find_next_program_line(current_line_index);
+    if (next_line != NULL) {
+        gosub_stack[gosub_stack_top] = next_line->line_number;
     } else {
         // No next line - mark as end of program
         gosub_stack[gosub_stack_top] = -2;
@@ -1184,8 +1241,8 @@ void expr_init(void (*print_func)(const char* str)) {
 
     clear_all_variables();
     clear_all_functions();
+    clear_all_program_lines();
 
-    num_program_lines = 0;
     goto_target = -1;
     for_stack_top = -1;
     current_line_index = -1;
