@@ -10,7 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 /*--------------------------------------------------------------------------------------------------------------------*/
-#define MAX_VARIABLES 100
 #define MAX_VAR_NAME 32
 #define MAX_FUNCTIONS 100
 #define MAX_FUNC_NAME 32
@@ -20,9 +19,10 @@
 #define MAX_FOR_LOOPS 10
 #define MAX_GOSUB_STACK 20
 
-typedef struct {
-    char name[MAX_VAR_NAME];
+typedef struct Variable {
+    char* name;  // Dynamically allocated variable name
     double value;
+    struct Variable* next;  // Next variable in linked list
 } Variable;
 
 typedef struct {
@@ -45,8 +45,7 @@ typedef struct {
     int next_line_index;  // Index of NEXT statement line (-1 if not found)
 } ForLoop;
 
-static Variable variables[MAX_VARIABLES];
-static int num_variables = 0;
+static Variable* variables_head = NULL;  // Head of variables linked list
 static Function functions[MAX_FUNCTIONS];
 static int num_functions = 0;
 static int functions_initialized = 0;
@@ -113,28 +112,55 @@ static int is_alnum_or_underscore(char c) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static double get_variable(const char* name) {
-    for (int i = 0; i < num_variables; i++) {
-        if (strcmp(variables[i].name, name) == 0) {
-            return variables[i].value;
+    Variable* current = variables_head;
+    while (current != NULL) {
+        if (strcmp(current->name, name) == 0) {
+            return current->value;
         }
+        current = current->next;
     }
-    return NAN;
+    return NAN;  // Variable not found
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void set_variable(const char* name, double value) {
-    for (int i = 0; i < num_variables; i++) {
-        if (strcmp(variables[i].name, name) == 0) {
-            variables[i].value = value;
+    // First try to find existing variable
+    Variable* current = variables_head;
+    while (current != NULL) {
+        if (strcmp(current->name, name) == 0) {
+            current->value = value;
             return;
         }
+        current = current->next;
     }
 
-    if (num_variables < MAX_VARIABLES) {
-        strncpy(variables[num_variables].name, name, MAX_VAR_NAME - 1);
-        variables[num_variables].name[MAX_VAR_NAME - 1] = '\0';
-        variables[num_variables].value = value;
-        num_variables++;
+    // Variable not found, create new one
+    Variable* new_var = (Variable*)calloc(1, sizeof(Variable));
+    if (new_var == NULL) {
+        return;  // Memory allocation failed
     }
+
+    // Allocate memory for name
+    new_var->name = (char*)calloc(strlen(name) + 1, sizeof(char));
+    if (new_var->name == NULL) {
+        free(new_var);
+        return;  // Memory allocation failed
+    }
+
+    strcpy(new_var->name, name);
+    new_var->value = value;
+    new_var->next = variables_head;  // Insert at head
+    variables_head = new_var;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+static void clear_all_variables(void) {
+    Variable* current = variables_head;
+    while (current != NULL) {
+        Variable* to_delete = current;
+        current = current->next;
+        free(to_delete->name);  // Free the dynamically allocated name
+        free(to_delete);        // Free the variable structure
+    }
+    variables_head = NULL;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static Function* find_function(const char* name) {
@@ -1131,7 +1157,10 @@ static double parse_statement(Parser* p) {
 /*--------------------------------------------------------------------------------------------------------------------*/
 void expr_init(void (*print_func)(const char* str)) {
     print_function = print_func;
-    num_variables = 0;
+
+    // Clear all variables
+    clear_all_variables();
+
     num_functions = 0;
     functions_initialized = 0;
     num_program_lines = 0;
