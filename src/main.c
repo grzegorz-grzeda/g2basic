@@ -8,8 +8,18 @@
 /*--------------------------------------------------------------------------------------------------------------------*/
 #define MAX_LINE_LENGTH 256
 /*--------------------------------------------------------------------------------------------------------------------*/
+/* Print function for BASIC output */
+static void basic_print(const char* str) {
+    printf("%s", str);
+    fflush(stdout);  // Ensure immediate output
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
 int main(int argc, char* argv[]) {
     char line[MAX_LINE_LENGTH];
+
+    // Initialize the expression evaluator
+    expr_init(basic_print);
+
     printf(
         "G2BASIC Interpreter with line numbers. Ctrl-C/Ctrl-D/Ctrl-Z to "
         "exit.\n\n");
@@ -25,7 +35,11 @@ int main(int argc, char* argv[]) {
         }
 
         double val;
-        expr_parse_line(line, &val);
+        const char* error = NULL;
+        expr_parse_line(line, &val, &error);
+        if (error) {
+            printf("Error: %s\n", error);
+        }
     }
 
     return 0;

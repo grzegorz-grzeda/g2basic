@@ -4,6 +4,7 @@
 #include "expr.h"
 #include <ctype.h>
 #include <math.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,6 +60,9 @@ static int gosub_stack[MAX_GOSUB_STACK];  // Stack for GOSUB return addresses
                                           // (line indices)
 static int gosub_stack_top = -1;          // Top of GOSUB stack (-1 = empty)
 
+// Print function pointer for output
+static void (*print_function)(const char* str) = NULL;
+
 typedef struct {
     const char* start;  // beginning of the input (for position reporting)
     const char* s;      // current cursor
@@ -79,7 +83,26 @@ typedef struct {
 */
 static double parse_expr(Parser* p);
 static double parse_statement(Parser* p);
-static void skip_ws(Parser* p);
+static const char* skip_ws(const char* p);
+/*--------------------------------------------------------------------------------------------------------------------*/
+/* Helper function to safely call the print function */
+static void safe_print(const char* str) {
+    if (print_function != NULL) {
+        print_function(str);
+    }
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+/* Helper function for formatted printing */
+static void safe_printf(const char* format, ...) {
+    if (print_function != NULL) {
+        char buffer[512];
+        va_list args;
+        va_start(args, format);
+        vsnprintf(buffer, sizeof(buffer), format, args);
+        va_end(args);
+        print_function(buffer);
+    }
+}
 /*--------------------------------------------------------------------------------------------------------------------*/
 static int is_alpha_or_underscore(char c) {
     return isalpha((unsigned char)c) || c == '_';
@@ -95,11 +118,10 @@ static double get_variable(const char* name) {
             return variables[i].value;
         }
     }
-    return NAN;  // Variable not found
+    return NAN;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void set_variable(const char* name, double value) {
-    // Check if variable already exists
     for (int i = 0; i < num_variables; i++) {
         if (strcmp(variables[i].name, name) == 0) {
             variables[i].value = value;
@@ -107,7 +129,6 @@ static void set_variable(const char* name, double value) {
         }
     }
 
-    // Add new variable if there's space
     if (num_variables < MAX_VARIABLES) {
         strncpy(variables[num_variables].name, name, MAX_VAR_NAME - 1);
         variables[num_variables].name[MAX_VAR_NAME - 1] = '\0';
@@ -128,12 +149,10 @@ static Function* find_function(const char* name) {
 static int register_function(const char* name,
                              int arg_count,
                              double (*func_ptr)(double[], int)) {
-    // Check if function already exists
     if (find_function(name) != NULL) {
         return -1;  // Function already exists
     }
 
-    // Add new function if there's space
     if (num_functions < MAX_FUNCTIONS) {
         strncpy(functions[num_functions].name, name, MAX_FUNC_NAME - 1);
         functions[num_functions].name[MAX_FUNC_NAME - 1] = '\0';
@@ -146,25 +165,24 @@ static int register_function(const char* name,
     return -1;  // No space for more functions
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-/* Built-in math function wrappers */
 static double func_sin(double args[], int count) {
     if (count != 1)
         return NAN;
     return sin(args[0]);
 }
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 static double func_cos(double args[], int count) {
     if (count != 1)
         return NAN;
     return cos(args[0]);
 }
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 static double func_tan(double args[], int count) {
     if (count != 1)
         return NAN;
     return tan(args[0]);
 }
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 static double func_sqrt(double args[], int count) {
     if (count != 1)
         return NAN;
@@ -172,19 +190,19 @@ static double func_sqrt(double args[], int count) {
         return NAN;
     return sqrt(args[0]);
 }
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 static double func_abs(double args[], int count) {
     if (count != 1)
         return NAN;
     return fabs(args[0]);
 }
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 static double func_pow(double args[], int count) {
     if (count != 2)
         return NAN;
     return pow(args[0], args[1]);
 }
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 static double func_log(double args[], int count) {
     if (count != 1)
         return NAN;
@@ -192,7 +210,7 @@ static double func_log(double args[], int count) {
         return NAN;
     return log(args[0]);
 }
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 static double func_log10(double args[], int count) {
     if (count != 1)
         return NAN;
@@ -200,25 +218,25 @@ static double func_log10(double args[], int count) {
         return NAN;
     return log10(args[0]);
 }
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 static double func_exp(double args[], int count) {
     if (count != 1)
         return NAN;
     return exp(args[0]);
 }
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 static double func_floor(double args[], int count) {
     if (count != 1)
         return NAN;
     return floor(args[0]);
 }
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 static double func_ceil(double args[], int count) {
     if (count != 1)
         return NAN;
     return ceil(args[0]);
 }
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 static double func_min(double args[], int count) {
     if (count < 1)
         return NAN;
@@ -229,7 +247,7 @@ static double func_min(double args[], int count) {
     }
     return min_val;
 }
-
+/*--------------------------------------------------------------------------------------------------------------------*/
 static double func_max(double args[], int count) {
     if (count < 1)
         return NAN;
@@ -257,7 +275,6 @@ static void init_builtin_functions(void) {
     register_function("max", -1, func_max);  // Variadic
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-/* Program line management functions */
 static int find_line_index(int line_number) {
     for (int i = 0; i < num_program_lines; i++) {
         if (program[i].line_number == line_number) {
@@ -271,11 +288,9 @@ static int find_line_index(int line_number) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void insert_program_line(int line_number, const char* text) {
-    // Find insertion point
     int insert_pos = num_program_lines;
     for (int i = 0; i < num_program_lines; i++) {
         if (program[i].line_number == line_number) {
-            // Replace existing line
             strncpy(program[i].text, text, MAX_LINE_LENGTH - 1);
             program[i].text[MAX_LINE_LENGTH - 1] = '\0';
             return;
@@ -286,17 +301,14 @@ static void insert_program_line(int line_number, const char* text) {
         }
     }
 
-    // Check if we have space
     if (num_program_lines >= MAX_PROGRAM_LINES) {
         return;  // No space for more lines
     }
 
-    // Shift lines to make room
     for (int i = num_program_lines; i > insert_pos; i--) {
         program[i] = program[i - 1];
     }
 
-    // Insert new line
     program[insert_pos].line_number = line_number;
     strncpy(program[insert_pos].text, text, MAX_LINE_LENGTH - 1);
     program[insert_pos].text[MAX_LINE_LENGTH - 1] = '\0';
@@ -309,7 +321,6 @@ static void delete_program_line(int line_number) {
         return;  // Line not found
     }
 
-    // Shift lines down
     for (int i = index; i < num_program_lines - 1; i++) {
         program[i] = program[i + 1];
     }
@@ -322,7 +333,7 @@ static void clear_program(void) {
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void list_program(void) {
     for (int i = 0; i < num_program_lines; i++) {
-        printf("%d %s\n", program[i].line_number, program[i].text);
+        safe_printf("%d %s\n", program[i].line_number, program[i].text);
     }
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
@@ -346,9 +357,11 @@ static int run_program(void) {
             // About to execute a FOR statement, prepare to update stack
         }
 
-        int ret = expr_eval(program[i].text, &result);
+        const char* error = NULL;
+        int ret = expr_eval(program[i].text, &result, &error);
         if (ret != 0) {
-            printf("Error in line %d\n", program[i].line_number);
+            safe_printf("Error in line %d: %s\n", program[i].line_number,
+                   error ? error : "Unknown error");
             return -1;  // Stop execution on error
         }
         // Check if GOTO was executed (from GOTO, IF-THEN, NEXT, or
@@ -370,7 +383,7 @@ static int run_program(void) {
             }
 
             if (target_index == -1) {
-                printf("Error: line %d not found\n", goto_target);
+                safe_printf("Error: line %d not found\n", goto_target);
                 return -1;
             }
 
@@ -407,7 +420,7 @@ static int handle_basic_command(const char* input) {
     if (strncmp(p, "NEW", 3) == 0 &&
         (isspace((unsigned char)p[3]) || p[3] == '\0')) {
         clear_program();
-        printf("Program cleared\n");
+        safe_print("Program cleared\n");
         return 1;  // Command handled
     }
 
@@ -419,11 +432,11 @@ static double parse_print_statement(Parser* p) {
     // Skip the "PRINT" keyword (already matched)
     p->s += 5;  // Skip "PRINT"
 
-    skip_ws(p);
+    p->s = skip_ws(p->s);
 
     // Handle empty PRINT (just print newline)
     if (*p->s == '\0') {
-        printf("\n");
+        safe_print("\n");
         return 0.0;
     }
 
@@ -431,7 +444,7 @@ static double parse_print_statement(Parser* p) {
     int first = 1;
     do {
         if (!first) {
-            printf(" ");  // Space between expressions
+            safe_print(" ");  // Space between expressions
         }
         first = 0;
 
@@ -440,18 +453,18 @@ static double parse_print_statement(Parser* p) {
             return NAN;
         }
 
-        printf("%.*g", 15, value);
+        safe_printf("%.*g", 15, value);
 
-        skip_ws(p);
+        p->s = skip_ws(p->s);
         if (*p->s == ',') {
             p->s++;  // consume comma
-            skip_ws(p);
+            p->s = skip_ws(p->s);
         } else {
             break;
         }
     } while (*p->s != '\0');
 
-    printf("\n");  // End with newline
+    safe_print("\n");  // End with newline
     return 0.0;    // PRINT statements don't return meaningful values
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
@@ -460,7 +473,7 @@ static double parse_goto_statement(Parser* p) {
     // Skip the "GOTO" keyword (already matched)
     p->s += 4;  // Skip "GOTO"
 
-    skip_ws(p);
+    p->s = skip_ws(p->s);
 
     // Parse the target line number
     if (!isdigit((unsigned char)*p->s)) {
@@ -490,7 +503,7 @@ static double parse_comparison(Parser* p) {
     if (p->err)
         return NAN;
 
-    skip_ws(p);
+    p->s = skip_ws(p->s);
 
     // Parse comparison operator
     char op1 = *p->s;
@@ -535,14 +548,14 @@ static double parse_if_statement(Parser* p) {
     // Skip the "IF" keyword (already matched)
     p->s += 2;  // Skip "IF"
 
-    skip_ws(p);
+    p->s = skip_ws(p->s);
 
     // Parse the condition
     double condition = parse_comparison(p);
     if (p->err)
         return NAN;
 
-    skip_ws(p);
+    p->s = skip_ws(p->s);
 
     // Expect THEN keyword
     if (strncmp(p->s, "THEN", 4) != 0) {
@@ -551,7 +564,7 @@ static double parse_if_statement(Parser* p) {
     }
     p->s += 4;  // Skip "THEN"
 
-    skip_ws(p);
+    p->s = skip_ws(p->s);
 
     // Check if condition is true (non-zero)
     if (condition != 0.0) {
@@ -589,7 +602,7 @@ static double parse_for_statement(Parser* p) {
     // Skip the "FOR" keyword (already matched)
     p->s += 3;  // Skip "FOR"
 
-    skip_ws(p);
+    p->s = skip_ws(p->s);
 
     // Parse variable name
     if (!is_alpha_or_underscore(*p->s)) {
@@ -604,7 +617,7 @@ static double parse_for_statement(Parser* p) {
     }
     var_name[len] = '\0';
 
-    skip_ws(p);
+    p->s = skip_ws(p->s);
 
     // Expect '='
     if (*p->s != '=') {
@@ -618,7 +631,7 @@ static double parse_for_statement(Parser* p) {
     if (p->err)
         return NAN;
 
-    skip_ws(p);
+    p->s = skip_ws(p->s);
 
     // Expect TO
     if (strncmp(p->s, "TO", 2) != 0) {
@@ -632,7 +645,7 @@ static double parse_for_statement(Parser* p) {
     if (p->err)
         return NAN;
 
-    skip_ws(p);
+    p->s = skip_ws(p->s);
 
     // Check for optional STEP
     double step_val = 1.0;
@@ -672,7 +685,7 @@ static double parse_next_statement(Parser* p) {
     // Skip the "NEXT" keyword (already matched)
     p->s += 4;  // Skip "NEXT"
 
-    skip_ws(p);
+    p->s = skip_ws(p->s);
 
     // Parse variable name
     if (!is_alpha_or_underscore(*p->s)) {
@@ -737,7 +750,7 @@ static double parse_gosub_statement(Parser* p) {
     // Skip the "GOSUB" keyword (already matched)
     p->s += 5;  // Skip "GOSUB"
 
-    skip_ws(p);
+    p->s = skip_ws(p->s);
 
     // Parse the target line number
     if (!isdigit((unsigned char)*p->s)) {
@@ -815,13 +828,15 @@ static double parse_end_statement(Parser* p) {
     return 0.0;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-static void skip_ws(Parser* p) {
-    while (isspace((unsigned char)*p->s))
-        p->s++;
+static const char* skip_ws(const char* p) {
+    while (*p && isspace((unsigned char)*p)) {
+        p++;
+    }
+    return p;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static int accept(Parser* p, char c) {
-    skip_ws(p);
+    p->s = skip_ws(p->s);
     if (*p->s == c) {
         p->s++;
         return 1;
@@ -830,7 +845,7 @@ static int accept(Parser* p, char c) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void expect(Parser* p, char c) {
-    skip_ws(p);
+    p->s = skip_ws(p->s);
     if (*p->s != c) {
         static char msg[64];
         snprintf(msg, sizeof(msg), "expected '%c'", c);
@@ -841,7 +856,7 @@ static void expect(Parser* p, char c) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static double parse_number(Parser* p) {
-    skip_ws(p);
+    p->s = skip_ws(p->s);
     const char* beg = p->s;
     // Accept optional digits, dot, digits, exponent, etc., via strtod
     char* endptr = NULL;
@@ -855,7 +870,7 @@ static double parse_number(Parser* p) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static double parse_variable(Parser* p) {
-    skip_ws(p);
+    p->s = skip_ws(p->s);
 
     if (!is_alpha_or_underscore(*p->s)) {
         p->err = "expected variable name";
@@ -900,7 +915,7 @@ static double parse_function_call(Parser* p, const char* func_name) {
     int arg_count = 0;
 
     // Parse arguments
-    skip_ws(p);
+    p->s = skip_ws(p->s);
     if (*p->s != ')') {  // Function has arguments
         do {
             if (arg_count >= MAX_FUNC_ARGS) {
@@ -913,7 +928,7 @@ static double parse_function_call(Parser* p, const char* func_name) {
                 return NAN;
             arg_count++;
 
-            skip_ws(p);
+            p->s = skip_ws(p->s);
             if (*p->s == ',') {
                 p->s++;  // consume comma
             } else {
@@ -940,7 +955,7 @@ static double parse_function_call(Parser* p, const char* func_name) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static double parse_factor(Parser* p) {
-    skip_ws(p);
+    p->s = skip_ws(p->s);
     // unary +/-
     if (*p->s == '+' || *p->s == '-') {
         int neg = (*p->s == '-');
@@ -969,7 +984,7 @@ static double parse_factor(Parser* p) {
         }
         identifier[len] = '\0';
 
-        skip_ws(p);
+        p->s = skip_ws(p->s);
 
         // Check if it's a function call (followed by '(')
         if (*p->s == '(') {
@@ -987,7 +1002,7 @@ static double parse_factor(Parser* p) {
 static double parse_term(Parser* p) {
     double v = parse_factor(p);
     while (!p->err) {
-        skip_ws(p);
+        p->s = skip_ws(p->s);
         if (*p->s == '*' || *p->s == '/') {
             char op = *p->s++;
             double rhs = parse_factor(p);
@@ -1012,7 +1027,7 @@ static double parse_term(Parser* p) {
 static double parse_expr(Parser* p) {
     double v = parse_term(p);
     while (!p->err) {
-        skip_ws(p);
+        p->s = skip_ws(p->s);
         if (*p->s == '+' || *p->s == '-') {
             char op = *p->s++;
             double rhs = parse_term(p);
@@ -1027,7 +1042,7 @@ static double parse_expr(Parser* p) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static double parse_statement(Parser* p) {
-    skip_ws(p);
+    p->s = skip_ws(p->s);
 
     // Check for PRINT statement
     if (strncmp(p->s, "PRINT", 5) == 0 &&
@@ -1091,7 +1106,7 @@ static double parse_statement(Parser* p) {
         }
         var_name[len] = '\0';
 
-        skip_ws(p);
+        p->s = skip_ws(p->s);
 
         // Check if followed by '='
         if (*p->s == '=') {
@@ -1114,49 +1129,59 @@ static double parse_statement(Parser* p) {
     return parse_expr(p);
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
-int expr_eval(const char* expr, double* result) {
-    // Initialize built-in functions on first call
-    if (!functions_initialized) {
-        init_builtin_functions();
-        functions_initialized = 1;
-    }
+void expr_init(void (*print_func)(const char* str)) {
+    // Set the print function
+    print_function = print_func;
+    
+    // Clear all variables
+    num_variables = 0;
 
+    // Clear all functions
+    num_functions = 0;
+    functions_initialized = 0;
+
+    // Clear program storage
+    num_program_lines = 0;
+
+    // Reset control flow state
+    goto_target = -1;
+    for_stack_top = -1;
+    current_line_index = -1;
+    gosub_stack_top = -1;
+
+    // Initialize built-in functions
+    init_builtin_functions();
+    functions_initialized = 1;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+int expr_eval(const char* expr, double* result, const char** error) {
     Parser p = {.start = expr, .s = expr, .err = NULL};
     double v = parse_statement(&p);
     if (p.err) {
+        if (error) {
+            *error = p.err;
+        }
         return -1;  // Error: parsing failed
     }
-    skip_ws(&p);
+    p.s = skip_ws(p.s);
     if (*p.s != '\0') {
+        *error = "Unexpected characters at end";
         return -1;  // Error: unexpected characters at end
     }
     *result = v;
-    return 0;  // Success
+    return 0;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 int expr_register_function(const char* name,
                            int arg_count,
                            double (*func_ptr)(double[], int)) {
-    // Initialize built-in functions if not already done
-    if (!functions_initialized) {
-        init_builtin_functions();
-        functions_initialized = 1;
-    }
-
     return register_function(name, arg_count, func_ptr);
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 /* Parse a line that may start with a line number */
-int expr_parse_line(const char* input, double* result) {
-    // Initialize built-in functions if not already done
-    if (!functions_initialized) {
-        init_builtin_functions();
-        functions_initialized = 1;
-    }
-
+int expr_parse_line(const char* input, double* result, const char** error) {
     const char* p = input;
 
-    // Skip leading whitespace
     while (isspace((unsigned char)*p))
         p++;
 
@@ -1195,7 +1220,7 @@ int expr_parse_line(const char* input, double* result) {
         }
     } else {
         // No line number - immediate mode evaluation
-        return expr_eval(input, result);
+        return expr_eval(input, result, error);
     }
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
