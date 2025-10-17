@@ -11,8 +11,6 @@
 #include <string.h>
 /*--------------------------------------------------------------------------------------------------------------------*/
 #define MAX_FUNC_ARGS 8
-#define MAX_FOR_LOOPS 10
-#define MAX_GOSUB_STACK 20
 
 typedef struct Variable {
     char* name;  // Dynamically allocated variable name
@@ -33,24 +31,27 @@ typedef struct ProgramLine {
     struct ProgramLine* next;  // Next program line in linked list
 } ProgramLine;
 
-typedef struct {
-    char* var_name;       // Dynamically allocated loop variable name
-    double start_value;   // Starting value
-    double end_value;     // Ending value
-    double step_value;    // Step increment (default 1)
-    int for_line_number;  // Line number of FOR statement
+typedef struct ForLoop {
+    char* var_name;         // Dynamically allocated loop variable name
+    double start_value;     // Starting value
+    double end_value;       // Ending value
+    double step_value;      // Step increment (default 1)
+    int for_line_number;    // Line number of FOR statement
+    struct ForLoop* next;   // Next loop in the stack (linked list)
 } ForLoop;
 
-static Variable* variables_head = NULL;   // Head of variables linked list
-static Function* functions_head = NULL;   // Head of functions linked list
-static ProgramLine* program_head = NULL;  // Head of program lines linked list
-static int goto_target = -1;  // Target line number for GOTO (-1 = no jump)
-static ForLoop for_stack[MAX_FOR_LOOPS];  // Stack for nested FOR loops
-static int for_stack_top = -1;            // Top of FOR stack (-1 = empty)
-static int current_line_index = -1;       // Current executing line index
-static int gosub_stack[MAX_GOSUB_STACK];  // Stack for GOSUB return addresses
-                                          // (line indices)
-static int gosub_stack_top = -1;          // Top of GOSUB stack (-1 = empty)
+typedef struct GosubStackEntry {
+    int return_line_number;         // Line number to return to
+    struct GosubStackEntry* next;   // Next entry in the stack (linked list)
+} GosubStackEntry;
+
+static Variable* variables_head = NULL;      // Head of variables linked list
+static Function* functions_head = NULL;      // Head of functions linked list
+static ProgramLine* program_head = NULL;     // Head of program lines linked list
+static int goto_target = -1;                 // Target line number for GOTO (-1 = no jump)
+static ForLoop* for_stack_head = NULL;       // Head of FOR loops stack (linked list)
+static int current_line_index = -1;          // Current executing line index
+static GosubStackEntry* gosub_stack_head = NULL;  // Head of GOSUB stack (linked list)
 
 // Print function pointer for output
 static void (*print_function)(const char* str) = NULL;
@@ -213,14 +214,28 @@ static void clear_all_program_lines(void) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void clear_all_for_loops(void) {
-    // Free any dynamically allocated variable names in FOR loops
-    for (int i = 0; i <= for_stack_top; i++) {
-        if (for_stack[i].var_name != NULL) {
-            free(for_stack[i].var_name);
-            for_stack[i].var_name = NULL;
+    // Free all FOR loops in the linked list
+    ForLoop* current = for_stack_head;
+    while (current != NULL) {
+        ForLoop* next = current->next;
+        if (current->var_name != NULL) {
+            free(current->var_name);
         }
+        free(current);
+        current = next;
     }
-    for_stack_top = -1;
+    for_stack_head = NULL;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+static void clear_all_gosub_stack(void) {
+    // Free all GOSUB stack entries in the linked list
+    GosubStackEntry* current = gosub_stack_head;
+    while (current != NULL) {
+        GosubStackEntry* next = current->next;
+        free(current);
+        current = next;
+    }
+    gosub_stack_head = NULL;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static ProgramLine* find_program_line(int line_number) {
@@ -488,7 +503,7 @@ static void insert_program_line(int line_number, const char* text) {
 static int run_program(void) {
     goto_target = -1;       // Reset GOTO target
     clear_all_for_loops();  // Reset FOR stack with proper cleanup
-    gosub_stack_top = -1;   // Reset GOSUB stack
+    clear_all_gosub_stack(); // Reset GOSUB stack
 
     ProgramLine* current_line = program_head;
 
@@ -810,32 +825,33 @@ static double parse_for_statement(Parser* p) {
         }
     }
 
-    // Check for stack overflow
-    if (for_stack_top >= MAX_FOR_LOOPS - 1) {
-        p->err = "FOR loop nesting too deep";
+    // Create new FOR loop node
+    ForLoop* loop = (ForLoop*)calloc(1, sizeof(ForLoop));
+    if (loop == NULL) {
+        p->err = "memory allocation failed for FOR loop";
         free(var_name);
         return NAN;
     }
-
-    // Push new FOR loop onto stack
-    for_stack_top++;
-    ForLoop* loop = &for_stack[for_stack_top];
 
     // Allocate memory for variable name
     loop->var_name = (char*)calloc(strlen(var_name) + 1, sizeof(char));
     if (loop->var_name == NULL) {
         p->err = "memory allocation failed for FOR loop variable";
-        for_stack_top--;  // Pop the stack since we failed
+        free(loop);
         free(var_name);
         return NAN;
     }
     strcpy(loop->var_name, var_name);
 
+    // Set loop parameters
     loop->start_value = start_val;
     loop->end_value = end_val;
     loop->step_value = step_val;
-    loop->for_line_number =
-        current_line_index;  // Use current executing line number
+    loop->for_line_number = current_line_index;  // Use current executing line number
+    
+    // Push to head of linked list (stack behavior)
+    loop->next = for_stack_head;
+    for_stack_head = loop;
 
     // Set the loop variable to start value
     set_variable(var_name, start_val);
@@ -866,13 +882,13 @@ static double parse_next_statement(Parser* p) {
     }
 
     // Check if there's a matching FOR loop
-    if (for_stack_top < 0) {
+    if (for_stack_head == NULL) {
         p->err = "NEXT without matching FOR";
         free(var_name);
         return NAN;
     }
 
-    ForLoop* loop = &for_stack[for_stack_top];
+    ForLoop* loop = for_stack_head;
     if (strcmp(loop->var_name, var_name) != 0) {
         p->err = "NEXT variable doesn't match FOR variable";
         free(var_name);
@@ -909,11 +925,11 @@ static double parse_next_statement(Parser* p) {
         // If no next line found, continue to end of program
     } else {
         // Loop finished, pop from stack and free memory
-        if (for_stack[for_stack_top].var_name != NULL) {
-            free(for_stack[for_stack_top].var_name);
-            for_stack[for_stack_top].var_name = NULL;
+        for_stack_head = loop->next;
+        if (loop->var_name != NULL) {
+            free(loop->var_name);
         }
-        for_stack_top--;
+        free(loop);
     }
 
     // Free the temporary variable name
@@ -945,22 +961,25 @@ static double parse_gosub_statement(Parser* p) {
 
     p->s = endptr;
 
-    // Check for stack overflow
-    if (gosub_stack_top >= MAX_GOSUB_STACK - 1) {
-        p->err = "GOSUB nesting too deep";
+    // Create new GOSUB stack entry
+    GosubStackEntry* entry = (GosubStackEntry*)calloc(1, sizeof(GosubStackEntry));
+    if (entry == NULL) {
+        p->err = "memory allocation failed for GOSUB stack";
         return NAN;
     }
 
-    // Push current line index + 1 (return address) onto GOSUB stack
-    gosub_stack_top++;
     // Store the line number of the next line
     ProgramLine* next_line = find_next_program_line(current_line_index);
     if (next_line != NULL) {
-        gosub_stack[gosub_stack_top] = next_line->line_number;
+        entry->return_line_number = next_line->line_number;
     } else {
         // No next line - mark as end of program
-        gosub_stack[gosub_stack_top] = -2;
+        entry->return_line_number = -2;
     }
+
+    // Push to head of linked list (stack behavior)
+    entry->next = gosub_stack_head;
+    gosub_stack_head = entry;
 
     // Set the goto target
     goto_target = (int)target_line;
@@ -974,14 +993,16 @@ static double parse_return_statement(Parser* p) {
     p->s += 6;  // Skip "RETURN"
 
     // Check if there's a matching GOSUB
-    if (gosub_stack_top < 0) {
+    if (gosub_stack_head == NULL) {
         p->err = "RETURN without matching GOSUB";
         return NAN;
     }
 
     // Pop return address from stack
-    int return_line_number = gosub_stack[gosub_stack_top];
-    gosub_stack_top--;
+    GosubStackEntry* entry = gosub_stack_head;
+    int return_line_number = entry->return_line_number;
+    gosub_stack_head = entry->next;
+    free(entry);
 
     // Jump back to the return address
     if (return_line_number == -2) {
@@ -1315,10 +1336,10 @@ void expr_init(void (*print_func)(const char* str)) {
     clear_all_functions();
     clear_all_program_lines();
     clear_all_for_loops();
+    clear_all_gosub_stack();
 
     goto_target = -1;
     current_line_index = -1;
-    gosub_stack_top = -1;
     init_builtin_functions();
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
