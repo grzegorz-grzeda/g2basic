@@ -396,7 +396,21 @@ static void set_variable(const char* name, double value) {
     new_var->next = variables_head;  // Insert at head
     variables_head = new_var;
 }
+
 /*--------------------------------------------------------------------------------------------------------------------*/
+/* MEMORY MANAGEMENT FUNCTIONS */
+/*--------------------------------------------------------------------------------------------------------------------*/
+
+/**
+ * @brief Clear all variables from memory
+ * 
+ * Frees all dynamically allocated variables and their associated memory.
+ * This includes freeing the variable name strings and the variable structures
+ * themselves. After calling this function, the variables list will be empty.
+ * 
+ * @note This function is called during interpreter initialization and cleanup
+ * @note All variable values are lost when this function is called
+ */
 static void clear_all_variables(void) {
     Variable* current = variables_head;
     while (current != NULL) {
@@ -407,7 +421,18 @@ static void clear_all_variables(void) {
     }
     variables_head = NULL;
 }
-/*--------------------------------------------------------------------------------------------------------------------*/
+
+/**
+ * @brief Clear all registered functions from memory
+ * 
+ * Frees all dynamically allocated function registrations and their associated
+ * memory. This includes freeing the function name strings and the function
+ * structures themselves. Built-in functions will be re-registered during
+ * interpreter initialization.
+ * 
+ * @note This function is called during interpreter initialization
+ * @note All custom registered functions are lost when this function is called
+ */
 static void clear_all_functions(void) {
     Function* current = functions_head;
     while (current != NULL) {
@@ -418,7 +443,18 @@ static void clear_all_functions(void) {
     }
     functions_head = NULL;
 }
-/*--------------------------------------------------------------------------------------------------------------------*/
+
+/**
+ * @brief Clear all program lines from memory
+ * 
+ * Frees all stored BASIC program lines and their associated memory.
+ * This includes freeing the program line text strings and the program line
+ * structures themselves. After calling this function, no program will be
+ * stored in memory.
+ * 
+ * @note This function is called during interpreter initialization
+ * @note The entire stored BASIC program is lost when this function is called
+ */
 static void clear_all_program_lines(void) {
     ProgramLine* current = program_head;
     while (current != NULL) {
@@ -429,7 +465,17 @@ static void clear_all_program_lines(void) {
     }
     program_head = NULL;
 }
-/*--------------------------------------------------------------------------------------------------------------------*/
+
+/**
+ * @brief Clear all FOR loop state from memory
+ * 
+ * Frees all FOR loop state structures and their associated memory.
+ * This includes freeing the loop variable name strings and the loop
+ * structures themselves. This effectively resets all FOR loop nesting.
+ * 
+ * @note This function is called during interpreter initialization and program execution
+ * @note All nested FOR loops are terminated when this function is called
+ */
 static void clear_all_for_loops(void) {
     ForLoop* current = for_stack_head;
     while (current != NULL) {
@@ -442,7 +488,17 @@ static void clear_all_for_loops(void) {
     }
     for_stack_head = NULL;
 }
-/*--------------------------------------------------------------------------------------------------------------------*/
+
+/**
+ * @brief Clear all GOSUB call stack from memory
+ * 
+ * Frees all GOSUB subroutine call stack entries and their associated memory.
+ * This effectively clears all pending RETURN addresses and resets the
+ * subroutine call stack to empty.
+ * 
+ * @note This function is called during interpreter initialization and program execution
+ * @note All nested GOSUB calls are cleared when this function is called
+ */
 static void clear_all_gosub_stack(void) {
     GosubStackEntry* current = gosub_stack_head;
     while (current != NULL) {
@@ -528,7 +584,14 @@ static Function* find_function(const char* name) {
     }
     return NULL;
 }
+
 /*--------------------------------------------------------------------------------------------------------------------*/
+
+/**
+ * @brief Register a custom function with the expression evaluator
+ * 
+ * @copydetails g2basic_register_function()
+ */
 int g2basic_register_function(const char* name,
                               int arg_count,
                               double (*func_ptr)(double[], int)) {
@@ -1454,7 +1517,14 @@ static int g2basic_eval(const char* expr, double* result, const char** error) {
     *result = v;
     return 0;
 }
+
 /*--------------------------------------------------------------------------------------------------------------------*/
+
+/**
+ * @brief Parse and execute a BASIC language line
+ * 
+ * @copydetails g2basic_parse()
+ */
 int g2basic_parse(const char* input, double* result, const char** error) {
     const char* p = input;
 
