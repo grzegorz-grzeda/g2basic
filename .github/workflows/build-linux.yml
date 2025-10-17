@@ -1,0 +1,81 @@
+name: Build Linux Executable
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ published ]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake
+        
+    - name: Create build directory
+      run: mkdir -p build
+      
+    - name: Configure CMake
+      run: |
+        cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release
+        
+    - name: Build project
+      run: |
+        cd build
+        make -j$(nproc)
+        
+    - name: Verify executable
+      run: |
+        ls -la build/examples/interactive/g2basic-interactive
+        file build/examples/interactive/g2basic-interactive
+        
+    - name: Test executable
+      run: |
+        echo "10 n = 10" > test.bas
+        echo "20 x = 0" >> test.bas
+        echo "30 y = 1" >> test.bas
+        echo "40 FOR i = 1 TO n" >> test.bas
+        echo "50 z = x + y" >> test.bas
+        echo "60 x = y" >> test.bas
+        echo "70 y = z" >> test.bas
+        echo "80 PRINT z" >> test.bas
+        echo "90 NEXT i" >> test.bas
+        echo "RUN" >> test.bas
+        ./build/examples/interactive/g2basic-interactive < test.bas
+        
+    - name: Upload executable artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: g2basic-interactive-linux-x64
+        path: build/examples/interactive/g2basic-interactive
+        retention-days: 30
+        
+    - name: Create release archive
+      if: github.event_name == 'release'
+      run: |
+        mkdir -p release
+        cp build/examples/interactive/g2basic-interactive release/
+        cp README.md release/
+        cp LICENSE release/
+        tar -czf g2basic-interactive-linux-x64.tar.gz -C release .
+        
+    - name: Upload release asset
+      if: github.event_name == 'release'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./g2basic-interactive-linux-x64.tar.gz
+        asset_name: g2basic-interactive-linux-x64.tar.gz
+        asset_content_type: application/gzip
