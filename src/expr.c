@@ -10,7 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 /*--------------------------------------------------------------------------------------------------------------------*/
-#define MAX_VAR_NAME 32
 #define MAX_FUNC_ARGS 8
 #define MAX_FOR_LOOPS 10
 #define MAX_GOSUB_STACK 20
@@ -35,12 +34,11 @@ typedef struct ProgramLine {
 } ProgramLine;
 
 typedef struct {
-    char var_name[MAX_VAR_NAME];  // Loop variable name
-    double start_value;           // Starting value
-    double end_value;             // Ending value
-    double step_value;            // Step increment (default 1)
-    int for_line_number;          // Line number of FOR statement
-    int next_line_number;  // Line number of NEXT statement (-1 if not found)
+    char* var_name;       // Dynamically allocated loop variable name
+    double start_value;   // Starting value
+    double end_value;     // Ending value
+    double step_value;    // Step increment (default 1)
+    int for_line_number;  // Line number of FOR statement
 } ForLoop;
 
 static Variable* variables_head = NULL;   // Head of variables linked list
@@ -104,6 +102,40 @@ static int is_alpha_or_underscore(char c) {
 /*--------------------------------------------------------------------------------------------------------------------*/
 static int is_alnum_or_underscore(char c) {
     return isalnum((unsigned char)c) || c == '_';
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+/* Parse an identifier (variable name, function name) dynamically */
+static char* parse_identifier(Parser* p) {
+    if (!is_alpha_or_underscore(*p->s)) {
+        return NULL;  // Not an identifier
+    }
+
+    // First pass: count the length
+    const char* start = p->s;
+    const char* end = p->s;
+    while (is_alnum_or_underscore(*end)) {
+        end++;
+    }
+
+    int len = end - start;
+    if (len == 0) {
+        return NULL;
+    }
+
+    // Allocate memory for the identifier
+    char* identifier = (char*)calloc(len + 1, sizeof(char));
+    if (identifier == NULL) {
+        return NULL;  // Memory allocation failed
+    }
+
+    // Copy the identifier
+    strncpy(identifier, start, len);
+    identifier[len] = '\0';
+
+    // Advance the parser
+    p->s = end;
+
+    return identifier;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static double get_variable(const char* name) {
@@ -178,6 +210,17 @@ static void clear_all_program_lines(void) {
         free(to_delete);        // Free the program line structure
     }
     program_head = NULL;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+static void clear_all_for_loops(void) {
+    // Free any dynamically allocated variable names in FOR loops
+    for (int i = 0; i <= for_stack_top; i++) {
+        if (for_stack[i].var_name != NULL) {
+            free(for_stack[i].var_name);
+            for_stack[i].var_name = NULL;
+        }
+    }
+    for_stack_top = -1;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static ProgramLine* find_program_line(int line_number) {
@@ -443,9 +486,9 @@ static void insert_program_line(int line_number, const char* text) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static int run_program(void) {
-    goto_target = -1;      // Reset GOTO target
-    for_stack_top = -1;    // Reset FOR stack
-    gosub_stack_top = -1;  // Reset GOSUB stack
+    goto_target = -1;       // Reset GOTO target
+    clear_all_for_loops();  // Reset FOR stack with proper cleanup
+    gosub_stack_top = -1;   // Reset GOSUB stack
 
     ProgramLine* current_line = program_head;
 
@@ -713,40 +756,45 @@ static double parse_for_statement(Parser* p) {
         return NAN;
     }
 
-    char var_name[MAX_VAR_NAME];
-    int len = 0;
-    while (len < MAX_VAR_NAME - 1 && is_alnum_or_underscore(*p->s)) {
-        var_name[len++] = *p->s++;
+    char* var_name = parse_identifier(p);
+    if (var_name == NULL) {
+        p->err = "failed to parse variable name or memory allocation failed";
+        return NAN;
     }
-    var_name[len] = '\0';
 
     p->s = skip_ws(p->s);
 
     // Expect '='
     if (*p->s != '=') {
         p->err = "expected '=' after FOR variable";
+        free(var_name);
         return NAN;
     }
     p->s++;
 
     // Parse start value
     double start_val = parse_expr(p);
-    if (p->err)
+    if (p->err) {
+        free(var_name);
         return NAN;
+    }
 
     p->s = skip_ws(p->s);
 
     // Expect TO
     if (strncmp(p->s, "TO", 2) != 0) {
         p->err = "expected TO after FOR start value";
+        free(var_name);
         return NAN;
     }
     p->s += 2;
 
     // Parse end value
     double end_val = parse_expr(p);
-    if (p->err)
+    if (p->err) {
+        free(var_name);
         return NAN;
+    }
 
     p->s = skip_ws(p->s);
 
@@ -756,30 +804,44 @@ static double parse_for_statement(Parser* p) {
         (isspace((unsigned char)p->s[4]) || p->s[4] == '\0')) {
         p->s += 4;
         step_val = parse_expr(p);
-        if (p->err)
+        if (p->err) {
+            free(var_name);
             return NAN;
+        }
     }
 
     // Check for stack overflow
     if (for_stack_top >= MAX_FOR_LOOPS - 1) {
         p->err = "FOR loop nesting too deep";
+        free(var_name);
         return NAN;
     }
 
     // Push new FOR loop onto stack
     for_stack_top++;
     ForLoop* loop = &for_stack[for_stack_top];
-    strncpy(loop->var_name, var_name, MAX_VAR_NAME - 1);
-    loop->var_name[MAX_VAR_NAME - 1] = '\0';
+
+    // Allocate memory for variable name
+    loop->var_name = (char*)calloc(strlen(var_name) + 1, sizeof(char));
+    if (loop->var_name == NULL) {
+        p->err = "memory allocation failed for FOR loop variable";
+        for_stack_top--;  // Pop the stack since we failed
+        free(var_name);
+        return NAN;
+    }
+    strcpy(loop->var_name, var_name);
+
     loop->start_value = start_val;
     loop->end_value = end_val;
     loop->step_value = step_val;
     loop->for_line_number =
         current_line_index;  // Use current executing line number
-    loop->next_line_number = -1;
 
     // Set the loop variable to start value
     set_variable(var_name, start_val);
+
+    // Free the temporary variable name since we've copied it
+    free(var_name);
 
     return 0.0;
 }
@@ -797,22 +859,23 @@ static double parse_next_statement(Parser* p) {
         return NAN;
     }
 
-    char var_name[MAX_VAR_NAME];
-    int len = 0;
-    while (len < MAX_VAR_NAME - 1 && is_alnum_or_underscore(*p->s)) {
-        var_name[len++] = *p->s++;
+    char* var_name = parse_identifier(p);
+    if (var_name == NULL) {
+        p->err = "failed to parse variable name or memory allocation failed";
+        return NAN;
     }
-    var_name[len] = '\0';
 
     // Check if there's a matching FOR loop
     if (for_stack_top < 0) {
         p->err = "NEXT without matching FOR";
+        free(var_name);
         return NAN;
     }
 
     ForLoop* loop = &for_stack[for_stack_top];
     if (strcmp(loop->var_name, var_name) != 0) {
         p->err = "NEXT variable doesn't match FOR variable";
+        free(var_name);
         return NAN;
     }
 
@@ -820,6 +883,7 @@ static double parse_next_statement(Parser* p) {
     double current_val = get_variable(var_name);
     if (isnan(current_val)) {
         p->err = "FOR variable not found";
+        free(var_name);
         return NAN;
     }
 
@@ -844,9 +908,16 @@ static double parse_next_statement(Parser* p) {
         }
         // If no next line found, continue to end of program
     } else {
-        // Loop finished, pop from stack
+        // Loop finished, pop from stack and free memory
+        if (for_stack[for_stack_top].var_name != NULL) {
+            free(for_stack[for_stack_top].var_name);
+            for_stack[for_stack_top].var_name = NULL;
+        }
         for_stack_top--;
     }
+
+    // Free the temporary variable name
+    free(var_name);
 
     return 0.0;
 }
@@ -983,24 +1054,22 @@ static double parse_variable(Parser* p) {
         return NAN;
     }
 
-    char var_name[MAX_VAR_NAME];
-    int len = 0;
-
-    // Parse variable name (starts with letter or underscore, followed by
-    // alphanumeric or underscore)
-    while (len < MAX_VAR_NAME - 1 && is_alnum_or_underscore(*p->s)) {
-        var_name[len++] = *p->s++;
+    char* var_name = parse_identifier(p);
+    if (var_name == NULL) {
+        p->err = "failed to parse variable name or memory allocation failed";
+        return NAN;
     }
-    var_name[len] = '\0';
 
     double value = get_variable(var_name);
     if (isnan(value)) {
         static char msg[64];
         snprintf(msg, sizeof(msg), "undefined variable '%s'", var_name);
         p->err = msg;
+        free(var_name);
         return NAN;
     }
 
+    free(var_name);
     return value;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
@@ -1081,22 +1150,23 @@ static double parse_factor(Parser* p) {
     // Try to parse as identifier (variable or function call)
     if (is_alpha_or_underscore(*p->s)) {
         // Parse the identifier name
-        char identifier[MAX_VAR_NAME];
-        int len = 0;
         const char* start = p->s;
-
-        while (len < MAX_VAR_NAME - 1 && is_alnum_or_underscore(*p->s)) {
-            identifier[len++] = *p->s++;
+        char* identifier = parse_identifier(p);
+        if (identifier == NULL) {
+            p->err = "failed to parse identifier or memory allocation failed";
+            return NAN;
         }
-        identifier[len] = '\0';
 
         p->s = skip_ws(p->s);
 
         // Check if it's a function call (followed by '(')
         if (*p->s == '(') {
-            return parse_function_call(p, identifier);
+            double result = parse_function_call(p, identifier);
+            free(identifier);
+            return result;
         } else {
             // It's a variable, restore position and parse as variable
+            free(identifier);
             p->s = start;
             return parse_variable(p);
         }
@@ -1203,14 +1273,12 @@ static double parse_statement(Parser* p) {
 
     // Try to parse a variable name
     if (is_alpha_or_underscore(*p->s)) {
-        char var_name[MAX_VAR_NAME];
-        int len = 0;
-
-        // Parse variable name
-        while (len < MAX_VAR_NAME - 1 && is_alnum_or_underscore(*p->s)) {
-            var_name[len++] = *p->s++;
+        char* var_name = parse_identifier(p);
+        if (var_name == NULL) {
+            p->err =
+                "failed to parse variable name or memory allocation failed";
+            return NAN;
         }
-        var_name[len] = '\0';
 
         p->s = skip_ws(p->s);
 
@@ -1221,12 +1289,17 @@ static double parse_statement(Parser* p) {
             // Parse the expression on the right side
             double value = parse_expr(p);
             if (p->err) {
+                free(var_name);
                 return value;
             }
 
             // Set the variable
             set_variable(var_name, value);
+            free(var_name);
             return value;
+        } else {
+            // Not an assignment, free the variable name and restore position
+            free(var_name);
         }
     }
 
@@ -1241,9 +1314,9 @@ void expr_init(void (*print_func)(const char* str)) {
     clear_all_variables();
     clear_all_functions();
     clear_all_program_lines();
+    clear_all_for_loops();
 
     goto_target = -1;
-    for_stack_top = -1;
     current_line_index = -1;
     gosub_stack_top = -1;
     init_builtin_functions();
