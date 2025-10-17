@@ -17,6 +17,7 @@
 #define MAX_PROGRAM_LINES 1000
 #define MAX_LINE_LENGTH 256
 #define MAX_FOR_LOOPS 10
+#define MAX_GOSUB_STACK 20
 
 typedef struct {
     char name[MAX_VAR_NAME];
@@ -54,6 +55,9 @@ static int goto_target = -1;  // Target line number for GOTO (-1 = no jump)
 static ForLoop for_stack[MAX_FOR_LOOPS];  // Stack for nested FOR loops
 static int for_stack_top = -1;            // Top of FOR stack (-1 = empty)
 static int current_line_index = -1;       // Current executing line index
+static int gosub_stack[MAX_GOSUB_STACK];  // Stack for GOSUB return addresses
+                                          // (line indices)
+static int gosub_stack_top = -1;          // Top of GOSUB stack (-1 = empty)
 
 typedef struct {
     const char* start;  // beginning of the input (for position reporting)
@@ -63,8 +67,9 @@ typedef struct {
 /*--------------------------------------------------------------------------------------------------------------------*/
 /* Forward declarations (grammar):
    statement := assignment | print_stmt | goto_stmt | if_stmt | for_stmt |
-   next_stmt | expr assignment := VARIABLE '=' expr print_stmt := 'PRINT'
-   expr_list goto_stmt := 'GOTO' NUMBER if_stmt := 'IF' comparison 'THEN'
+   next_stmt | gosub_stmt | return_stmt | expr assignment := VARIABLE '=' expr
+   print_stmt := 'PRINT' expr_list goto_stmt := 'GOTO' NUMBER gosub_stmt :=
+   'GOSUB' NUMBER return_stmt := 'RETURN' if_stmt := 'IF' comparison 'THEN'
    (NUMBER | statement) for_stmt := 'FOR' VARIABLE '=' expr 'TO' expr ['STEP'
    expr] next_stmt := 'NEXT' VARIABLE comparison := expr
    ('>'|'<'|'>='|'<='|'='|'<>') expr expr_list := expr (',' expr)* expr  := term
@@ -322,8 +327,9 @@ static void list_program(void) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static int run_program(void) {
-    goto_target = -1;    // Reset GOTO target
-    for_stack_top = -1;  // Reset FOR stack
+    goto_target = -1;      // Reset GOTO target
+    for_stack_top = -1;    // Reset FOR stack
+    gosub_stack_top = -1;  // Reset GOSUB stack
 
     int i = 0;
     while (i < num_program_lines) {
@@ -341,49 +347,36 @@ static int run_program(void) {
         }
 
         int ret = expr_eval(program[i].text, &result);
-        if (ret == 0) {
-            // Check if GOTO was executed (from GOTO, IF-THEN, or NEXT)
-            if (goto_target != -1) {
-                // Find the target line
-                int target_index = -1;
-                for (int j = 0; j < num_program_lines; j++) {
-                    if (program[j].line_number == goto_target) {
-                        target_index = j;
-                        break;
-                    }
-                }
-
-                if (target_index == -1) {
-                    printf("Error: line %d not found\n", goto_target);
-                    return -1;
-                }
-
-                goto_target = -1;  // Reset GOTO target
-                i = target_index;  // Jump to target line
-                continue;
-            }
-
-            // Don't print result for control statements
-            const char* p = program[i].text;
-            while (isspace((unsigned char)*p))
-                p++;
-
-            if ((strncmp(p, "PRINT", 5) != 0 ||
-                 !(isspace((unsigned char)p[5]) || p[5] == '\0')) &&
-                (strncmp(p, "GOTO", 4) != 0 ||
-                 !(isspace((unsigned char)p[4]) || p[4] == '\0')) &&
-                (strncmp(p, "IF", 2) != 0 ||
-                 !(isspace((unsigned char)p[2]) || p[2] == '\0')) &&
-                (strncmp(p, "FOR", 3) != 0 ||
-                 !(isspace((unsigned char)p[3]) || p[3] == '\0')) &&
-                (strncmp(p, "NEXT", 4) != 0 ||
-                 !(isspace((unsigned char)p[4]) || p[4] == '\0'))) {
-                // Not a control statement, show the result
-                printf("= %.*g\n", 15, result);
-            }
-        } else {
+        if (ret != 0) {
             printf("Error in line %d\n", program[i].line_number);
             return -1;  // Stop execution on error
+        }
+        // Check if GOTO was executed (from GOTO, IF-THEN, NEXT, or
+        // GOSUB/RETURN)
+        if (goto_target != -1) {
+            // Check for special end-of-program value
+            if (goto_target == -2) {
+                // RETURN past end of program - stop execution
+                break;
+            }
+
+            // Find the target line
+            int target_index = -1;
+            for (int j = 0; j < num_program_lines; j++) {
+                if (program[j].line_number == goto_target) {
+                    target_index = j;
+                    break;
+                }
+            }
+
+            if (target_index == -1) {
+                printf("Error: line %d not found\n", goto_target);
+                return -1;
+            }
+
+            goto_target = -1;  // Reset GOTO target
+            i = target_index;  // Jump to target line
+            continue;
         }
 
         i++;  // Move to next line
@@ -739,6 +732,89 @@ static double parse_next_statement(Parser* p) {
     return 0.0;
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
+/* Parse and execute a GOSUB statement */
+static double parse_gosub_statement(Parser* p) {
+    // Skip the "GOSUB" keyword (already matched)
+    p->s += 5;  // Skip "GOSUB"
+
+    skip_ws(p);
+
+    // Parse the target line number
+    if (!isdigit((unsigned char)*p->s)) {
+        p->err = "GOSUB requires a line number";
+        return NAN;
+    }
+
+    char* endptr;
+    long target_line = strtol(p->s, &endptr, 10);
+
+    if (target_line < 0 || target_line > 65535) {
+        p->err = "invalid GOSUB line number";
+        return NAN;
+    }
+
+    p->s = endptr;
+
+    // Check for stack overflow
+    if (gosub_stack_top >= MAX_GOSUB_STACK - 1) {
+        p->err = "GOSUB nesting too deep";
+        return NAN;
+    }
+
+    // Push current line index + 1 (return address) onto GOSUB stack
+    gosub_stack_top++;
+    // Store the line number of the next line (not the array index)
+    if (current_line_index + 1 < num_program_lines) {
+        gosub_stack[gosub_stack_top] =
+            program[current_line_index + 1].line_number;
+    } else {
+        // No next line - mark as end of program
+        gosub_stack[gosub_stack_top] = -2;
+    }
+
+    // Set the goto target
+    goto_target = (int)target_line;
+
+    return 0.0;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+/* Parse and execute a RETURN statement */
+static double parse_return_statement(Parser* p) {
+    // Skip the "RETURN" keyword (already matched)
+    p->s += 6;  // Skip "RETURN"
+
+    // Check if there's a matching GOSUB
+    if (gosub_stack_top < 0) {
+        p->err = "RETURN without matching GOSUB";
+        return NAN;
+    }
+
+    // Pop return address from stack
+    int return_line_number = gosub_stack[gosub_stack_top];
+    gosub_stack_top--;
+
+    // Jump back to the return address
+    if (return_line_number == -2) {
+        // Return past end of program - stop execution
+        goto_target = -2;  // Special value to indicate end of program
+    } else {
+        goto_target = return_line_number;
+    }
+
+    return 0.0;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+/* Parse and execute an END statement */
+static double parse_end_statement(Parser* p) {
+    // Skip the "END" keyword (already matched)
+    p->s += 3;  // Skip "END"
+
+    // Set goto target to special end-of-program value
+    goto_target = -2;  // Special value to indicate end of program
+
+    return 0.0;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
 static void skip_ws(Parser* p) {
     while (isspace((unsigned char)*p->s))
         p->s++;
@@ -981,6 +1057,24 @@ static double parse_statement(Parser* p) {
     if (strncmp(p->s, "NEXT", 4) == 0 &&
         (isspace((unsigned char)p->s[4]) || p->s[4] == '\0')) {
         return parse_next_statement(p);
+    }
+
+    // Check for GOSUB statement
+    if (strncmp(p->s, "GOSUB", 5) == 0 &&
+        (isspace((unsigned char)p->s[5]) || p->s[5] == '\0')) {
+        return parse_gosub_statement(p);
+    }
+
+    // Check for RETURN statement
+    if (strncmp(p->s, "RETURN", 6) == 0 &&
+        (isspace((unsigned char)p->s[6]) || p->s[6] == '\0')) {
+        return parse_return_statement(p);
+    }
+
+    // Check for END statement
+    if (strncmp(p->s, "END", 3) == 0 &&
+        (isspace((unsigned char)p->s[3]) || p->s[3] == '\0')) {
+        return parse_end_statement(p);
     }
 
     // Check if this looks like an assignment (variable = ...)
