@@ -58,6 +58,52 @@ cmake --build build
 Set the option to `ON` to enable examples explicitly. If reusing an existing build
 directory, CMake retains the cached option value.
 
+### Optional Math Functions
+
+`G2BASIC_ENABLE_MATH_FUNCTIONS` defaults to `ON`. Set it to `OFF` to
+register no built-in math functions and omit libm, regardless of the backend
+selection. Arithmetic, comparisons, control flow, and custom function
+registration still work.
+
+| Math functions | Use libm | Implementation |
+| --- | --- | --- |
+| ON | ON | `g2basic_math.c` (libm) |
+| ON | OFF | `g2basic_math_crude.c` (approximations) |
+| OFF | Either | `g2basic_math_none.c` (no built-ins) |
+
+```bash
+cmake -S . -B build -DG2BASIC_ENABLE_MATH_FUNCTIONS=OFF
+```
+
+`G2BASIC_ENABLE_MATH` selects libm-backed built-ins (`ON`) or small
+approximations with no libm linkage (`OFF`). It defaults to `ON` standalone
+and `OFF` when embedded. CMake caches the setting:
+
+```bash
+cmake -S . -B build -DG2BASIC_ENABLE_MATH=OFF
+```
+
+With math functions enabled, both backends register `sin`, `cos`, `tan`, `sqrt`, `abs`, `pow`, `log`,
+`log10`, `exp`, `floor`, `ceil`, `min`, and `max`. Custom function
+registration remains available. When math functions are enabled, CMake compiles exactly one implementation:
+`src/g2basic_math.c` for `ON`, or `src/g2basic_math_crude.c` for `OFF`. Only
+the libm implementation links `libm`.
+
+The fallback uses polynomial/series approximations and bounded range reduction.
+Angles are radians; trigonometric inputs above 1,000,000 radians in magnitude
+return NaN. Tangent returns NaN when the approximated cosine is below 0.00001
+in magnitude. Accuracy degrades near tangent poles. Invalid domains return NaN;
+exponential overflow/underflow returns infinity/zero. Negative-base powers
+support integer exponents with magnitude below 2^53; larger exponents return
+NaN. These routines are intended for simple embedded calculations, not
+libm-level accuracy or complete IEEE special-case compatibility.
+
+Direct source builds must compile `src/g2basic.c` and exactly one of
+`src/g2basic_math.c` (link libm), `src/g2basic_math_crude.c` (no libm),
+or `src/g2basic_math_none.c` (no built-ins or libm).
+No preprocessor definition is needed to select the implementation. The fallback still includes `<math.h>` for constants and
+classification macros, which do not require libm.
+
 ### Example Usage
 
 ```basic

@@ -2,7 +2,7 @@
  * @file g2basic.c
  * @brief G2Basic BASIC Language Interpreter Implementation
  *
- * This file contains the complete implementation of the G2Basic interpreter,
+ * This file contains the core implementation of the G2Basic interpreter,
  * a lightweight BASIC language interpreter designed for microcontrollers and
  * embedded systems with dynamic memory management.
  *
@@ -44,6 +44,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "g2basic_math.h"
 /*--------------------------------------------------------------------------------------------------------------------*/
 
 /** @brief Maximum number of arguments allowed for registered functions */
@@ -405,11 +406,11 @@ static void set_variable(const char* name, double value) {
 
 /**
  * @brief Clear all variables from memory
- * 
+ *
  * Frees all dynamically allocated variables and their associated memory.
  * This includes freeing the variable name strings and the variable structures
  * themselves. After calling this function, the variables list will be empty.
- * 
+ *
  * @note This function is called during interpreter initialization and cleanup
  * @note All variable values are lost when this function is called
  */
@@ -426,12 +427,12 @@ static void clear_all_variables(void) {
 
 /**
  * @brief Clear all registered functions from memory
- * 
+ *
  * Frees all dynamically allocated function registrations and their associated
  * memory. This includes freeing the function name strings and the function
  * structures themselves. Built-in functions will be re-registered during
  * interpreter initialization.
- * 
+ *
  * @note This function is called during interpreter initialization
  * @note All custom registered functions are lost when this function is called
  */
@@ -448,12 +449,12 @@ static void clear_all_functions(void) {
 
 /**
  * @brief Clear all program lines from memory
- * 
+ *
  * Frees all stored BASIC program lines and their associated memory.
  * This includes freeing the program line text strings and the program line
  * structures themselves. After calling this function, no program will be
  * stored in memory.
- * 
+ *
  * @note This function is called during interpreter initialization
  * @note The entire stored BASIC program is lost when this function is called
  */
@@ -470,12 +471,13 @@ static void clear_all_program_lines(void) {
 
 /**
  * @brief Clear all FOR loop state from memory
- * 
+ *
  * Frees all FOR loop state structures and their associated memory.
  * This includes freeing the loop variable name strings and the loop
  * structures themselves. This effectively resets all FOR loop nesting.
- * 
- * @note This function is called during interpreter initialization and program execution
+ *
+ * @note This function is called during interpreter initialization and program
+ * execution
  * @note All nested FOR loops are terminated when this function is called
  */
 static void clear_all_for_loops(void) {
@@ -493,12 +495,13 @@ static void clear_all_for_loops(void) {
 
 /**
  * @brief Clear all GOSUB call stack from memory
- * 
+ *
  * Frees all GOSUB subroutine call stack entries and their associated memory.
  * This effectively clears all pending RETURN addresses and resets the
  * subroutine call stack to empty.
- * 
- * @note This function is called during interpreter initialization and program execution
+ *
+ * @note This function is called during interpreter initialization and program
+ * execution
  * @note All nested GOSUB calls are cleared when this function is called
  */
 static void clear_all_gosub_stack(void) {
@@ -591,7 +594,7 @@ static Function* find_function(const char* name) {
 
 /**
  * @brief Register a custom function with the expression evaluator
- * 
+ *
  * @copydetails g2basic_register_function()
  */
 int g2basic_register_function(const char* name,
@@ -621,116 +624,6 @@ int g2basic_register_function(const char* name,
     functions_head = new_func;
 
     return 0;
-}
-/*--------------------------------------------------------------------------------------------------------------------*/
-static double func_sin(double args[], int count) {
-    if (count != 1)
-        return NAN;
-    return sin(args[0]);
-}
-/*--------------------------------------------------------------------------------------------------------------------*/
-static double func_cos(double args[], int count) {
-    if (count != 1)
-        return NAN;
-    return cos(args[0]);
-}
-/*--------------------------------------------------------------------------------------------------------------------*/
-static double func_tan(double args[], int count) {
-    if (count != 1)
-        return NAN;
-    return tan(args[0]);
-}
-/*--------------------------------------------------------------------------------------------------------------------*/
-static double func_sqrt(double args[], int count) {
-    if (count != 1)
-        return NAN;
-    if (args[0] < 0)
-        return NAN;
-    return sqrt(args[0]);
-}
-/*--------------------------------------------------------------------------------------------------------------------*/
-static double func_abs(double args[], int count) {
-    if (count != 1)
-        return NAN;
-    return fabs(args[0]);
-}
-/*--------------------------------------------------------------------------------------------------------------------*/
-static double func_pow(double args[], int count) {
-    if (count != 2)
-        return NAN;
-    return pow(args[0], args[1]);
-}
-/*--------------------------------------------------------------------------------------------------------------------*/
-static double func_log(double args[], int count) {
-    if (count != 1)
-        return NAN;
-    if (args[0] <= 0)
-        return NAN;
-    return log(args[0]);
-}
-/*--------------------------------------------------------------------------------------------------------------------*/
-static double func_log10(double args[], int count) {
-    if (count != 1)
-        return NAN;
-    if (args[0] <= 0)
-        return NAN;
-    return log10(args[0]);
-}
-/*--------------------------------------------------------------------------------------------------------------------*/
-static double func_exp(double args[], int count) {
-    if (count != 1)
-        return NAN;
-    return exp(args[0]);
-}
-/*--------------------------------------------------------------------------------------------------------------------*/
-static double func_floor(double args[], int count) {
-    if (count != 1)
-        return NAN;
-    return floor(args[0]);
-}
-/*--------------------------------------------------------------------------------------------------------------------*/
-static double func_ceil(double args[], int count) {
-    if (count != 1)
-        return NAN;
-    return ceil(args[0]);
-}
-/*--------------------------------------------------------------------------------------------------------------------*/
-static double func_min(double args[], int count) {
-    if (count < 1)
-        return NAN;
-    double min_val = args[0];
-    for (int i = 1; i < count; i++) {
-        if (args[i] < min_val)
-            min_val = args[i];
-    }
-    return min_val;
-}
-/*--------------------------------------------------------------------------------------------------------------------*/
-static double func_max(double args[], int count) {
-    if (count < 1)
-        return NAN;
-    double max_val = args[0];
-    for (int i = 1; i < count; i++) {
-        if (args[i] > max_val)
-            max_val = args[i];
-    }
-    return max_val;
-}
-/*--------------------------------------------------------------------------------------------------------------------*/
-static void init_builtin_functions(void) {
-    g2basic_register_function("sin", 1, func_sin);
-    g2basic_register_function("cos", 1, func_cos);
-    g2basic_register_function("tan", 1, func_tan);
-    g2basic_register_function("sqrt", 1, func_sqrt);
-    g2basic_register_function("abs", 1, func_abs);
-    g2basic_register_function("pow", 2, func_pow);
-    g2basic_register_function("log", 1, func_log);
-    g2basic_register_function("log10", 1, func_log10);
-    g2basic_register_function("exp", 1, func_exp);
-    g2basic_register_function("floor", 1, func_floor);
-    g2basic_register_function("ceil", 1, func_ceil);
-    g2basic_register_function("min", -1, func_min);
-    g2basic_register_function("max", -1, func_max);
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static void delete_program_line(int line_number) {
@@ -1508,7 +1401,7 @@ void g2basic_init(void (*print_func)(const char* str)) {
 
     goto_target = -1;
     current_line_index = -1;
-    init_builtin_functions();
+    g2basic_init_math_functions();
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static int g2basic_eval(const char* expr, double* result, const char** error) {
@@ -1528,12 +1421,10 @@ static int g2basic_eval(const char* expr, double* result, const char** error) {
     *result = v;
     return 0;
 }
-
 /*--------------------------------------------------------------------------------------------------------------------*/
-
 /**
  * @brief Parse and execute a BASIC language line
- * 
+ *
  * @copydetails g2basic_parse()
  */
 int g2basic_parse(const char* input, double* result, const char** error) {

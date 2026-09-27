@@ -38,7 +38,7 @@
  * - Clears all stored program lines
  * - Resets FOR loop and GOSUB stacks
  * - Resets GOTO target and execution state
- * - Registers built-in math functions (sin, cos, tan, sqrt, abs, pow, etc.)
+ * - Optionally registers built-in math functions (libm or approximations)
  * - Sets up the print function for program output
  *
  * @param print_func Function pointer for output operations. Pass NULL to
