@@ -33,6 +33,31 @@ make -j$(nproc)
 ./examples/interactive/g2basic-interactive
 ```
 
+### Using as a Library
+
+Add this repository to your project (for example, under `external/g2basic`), then
+include it in your main `CMakeLists.txt`:
+
+```cmake
+add_subdirectory(external/g2basic)
+target_link_libraries(your_app PRIVATE g2basic)
+```
+
+The `g2basic` target provides its public include directory, so your code can use
+`#include "g2basic.h"`.
+
+Examples are built by default for standalone builds and disabled by default when
+included in another project. Override this with `G2BASIC_BUILD_EXAMPLES`:
+
+```bash
+# Build only the library
+cmake -S . -B build -DG2BASIC_BUILD_EXAMPLES=OFF
+cmake --build build
+```
+
+Set the option to `ON` to enable examples explicitly. If reusing an existing build
+directory, CMake retains the cached option value.
+
 ### Example Usage
 
 ```basic
