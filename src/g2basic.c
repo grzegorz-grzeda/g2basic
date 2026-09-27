@@ -305,6 +305,8 @@ static const Keyword keywords[] = {
     {NULL, NULL}  // Sentinel
 };
 /*--------------------------------------------------------------------------------------------------------------------*/
+static void (*number_output)(double value) = NULL;
+
 static void safe_print(const char* str) {
     if (print_function != NULL) {
         print_function(str);
@@ -866,7 +868,11 @@ static double parse_print_statement(Parser* p) {
             return NAN;
         }
 
-        safe_printf("%.*g", 15, value);
+        if (print_function != NULL && number_output != NULL) {
+            number_output(value);
+        } else {
+            safe_printf("%.*g", 15, value);
+        }
 
         p->s = skip_ws(p->s);
         if (*p->s == ',') {
@@ -1486,8 +1492,13 @@ static double parse_statement(Parser* p) {
  *
  * @copydetails g2basic_init()
  */
+void g2basic_set_number_output(void (*print_number)(double value)) {
+    number_output = print_number;
+}
+
 void g2basic_init(void (*print_func)(const char* str)) {
     print_function = print_func;
+    number_output = NULL;
 
     clear_all_variables();
     clear_all_functions();

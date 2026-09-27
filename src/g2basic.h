@@ -55,6 +55,12 @@
  * @since 0.0.1
  */
 void g2basic_init(void (*print_func)(const char* str));
+/**
+ * Override numeric PRINT output after initialization. NULL restores the
+ * default formatter. g2basic_init resets this callback; output remains
+ * disabled when its text callback is NULL.
+ */
+void g2basic_set_number_output(void (*print_number)(double value));
 /*--------------------------------------------------------------------------------------------------------------------*/
 /**
  * @brief Register a custom function with the expression evaluator
