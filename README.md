@@ -68,6 +68,8 @@ contract, and constraints for embedded hosts.
 - [Development](docs/development.md): builds, options, tests, formatting, API
   documentation, and CI.
 - [C coding standard](docs/coding-standard.md): rules for new and changed code.
+- [Versioning](docs/versioning.md) and [changelog](CHANGELOG.md): SemVer 2.0.0
+  rules and release history.
 - [Contributor and agent instructions](AGENTS.md) ([CLAUDE.md](CLAUDE.md)
   imports them for Claude Code).
 

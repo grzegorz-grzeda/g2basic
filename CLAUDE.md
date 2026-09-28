@@ -17,6 +17,7 @@ document features the code does not implement.
 | Parser, runtime state, known issues | [docs/architecture.md](docs/architecture.md) |
 | Builds, options, tests, CI, API docs | [docs/development.md](docs/development.md) |
 | Coding rules | [docs/coding-standard.md](docs/coding-standard.md) |
+| Version bumps and changelog | [docs/versioning.md](docs/versioning.md) |
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
@@ -33,5 +34,7 @@ doxygen Doxyfile                                   # API docs -> build/docs; fai
   expressions with `PRINT 2 + 3`, not `2 + 3`.
 - `g2basic.c` does not build with `-Werror`; CMake applies `-Werror` only to the
   example. Compile the library without `-Werror` when testing by hand.
+- Any change to `src/` or library CMake bumps the `project()` VERSION and adds a
+  CHANGELOG.md entry in the same change (see AGENTS.md, Mandatory versioning).
 - This repository is often checked out as HomeCore's `external/g2basic`
   submodule. Commit here first, then update the submodule pointer there.

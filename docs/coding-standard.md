@@ -40,8 +40,9 @@ change the affected code, not in unrelated changes.
 - Document every header declaration with Doxygen, inside its group. State
   pointer ownership and lifetime, whether `NULL` is allowed, and every return
   value. See [API documentation](development.md#api-documentation).
-- Keep the public API backward compatible. Adding a function is fine; changing a
-  signature or return value needs a version bump and a note in the guides.
+- Keep the public API backward compatible where possible. Every change to
+  shipped code needs a version increment and changelog entry; see
+  [versioning](versioning.md).
 
 ## Memory and errors
 

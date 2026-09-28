@@ -29,6 +29,27 @@ differ, and top-level-only targets such as `docs` must stay guarded.
 - Describe current behavior, including limitations. Do not document features
   the code does not implement.
 
+## Mandatory versioning
+
+G2Basic follows Semantic Versioning 2.0.0 as defined in
+[versioning](docs/versioning.md). Every change to shipped code (`src/` and
+CMake files that affect the library) MUST, in the same change:
+
+- Increment `VERSION` in the `project(g2basic ...)` call in `CMakeLists.txt`,
+  the only version source. While the major version is 0, incompatible
+  public-interface changes increment MINOR, and compatible features and fixes
+  increment PATCH.
+- Add a matching [CHANGELOG.md](CHANGELOG.md) entry, marking incompatible
+  changes as **Breaking:**.
+
+The public interface includes the BASIC language, not only `g2basic.h`: a
+change that makes existing programs fail or print differently is incompatible.
+Documentation, comment-only, test, CI, example, and tooling changes do not
+change the version. Never reuse or rewrite a released version.
+
+The completion report MUST state the version decision: the new version and the
+reason for the increment, or why the change is exempt.
+
 ## Validation
 
 Use the commands in [development](docs/development.md). For code changes:

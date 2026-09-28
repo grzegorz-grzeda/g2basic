@@ -16,6 +16,7 @@ is on [GitHub](https://github.com/grzegorz-grzeda/g2basic).
 | [Architecture](https://github.com/grzegorz-grzeda/g2basic/blob/main/docs/architecture.md) | Parser, program store, execution, and memory |
 | [Development](https://github.com/grzegorz-grzeda/g2basic/blob/main/docs/development.md) | Builds, options, tests, CI, and API documentation |
 | [C coding standard](https://github.com/grzegorz-grzeda/g2basic/blob/main/docs/coding-standard.md) | Style, memory, error handling, and documentation rules |
+| [Versioning](https://github.com/grzegorz-grzeda/g2basic/blob/main/docs/versioning.md) | SemVer rules, the public interface, and the changelog |
 
 @section mainpage_groups API groups
 
