@@ -51,6 +51,11 @@ Binary operators are left-associative. There is no power operator (use
 `pow(a, b)`), no `MOD`, and no logical operators. Division by zero, including
 `0 / 0`, is the error `division by zero`.
 
+Parentheses, unary signs, function calls, and `IF ... THEN` statements can
+nest up to `G2BASIC_MAX_NESTING` levels in one line: 32 in a standalone build,
+8 by default when embedded, and whatever the host configures (4 on HomeCore's
+8 KB board). Sibling groups do not add up: `((1)) + ((2))` nests two levels.
+
 Function calls take up to 8 arguments: `name(arg, ...)`. The interpreter
 checks the argument count. See [built-in functions](#built-in-functions).
 
@@ -158,6 +163,7 @@ printed as `Error in line N: message`.
 | `unknown function 'name'` | No function with that exact name is registered. |
 | `function 'name' expects N arguments, got M` | Wrong argument count. |
 | `too many function arguments` | More than 8 arguments. |
+| `expression too deeply nested` | More than `G2BASIC_MAX_NESTING` nested parentheses, unary signs, function calls, or `IF ... THEN` statements. |
 | `division by zero` | The divisor is zero. |
 | `expected '('` / `expected ')'` | Unbalanced parentheses or a malformed call. |
 | `Unexpected characters at end` | Extra text after a complete statement, such as `2 ^ 3`. |

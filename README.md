@@ -12,7 +12,8 @@ stored program, and other lines run immediately. All values are numbers.
 - `IF ... THEN`, `FOR ... NEXT` with `STEP`, `GOTO`, `GOSUB` and `RETURN`, `END`
 - Custom C functions callable from BASIC, plus optional math built-ins, with or
   without libm
-- Heap-allocated state with no fixed limits on program size or nesting
+- Heap-allocated state with no fixed limit on program size, and a configurable
+  nesting limit that bounds stack use
 - Output through host callbacks
 
 ## Quick start

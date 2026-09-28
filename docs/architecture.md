@@ -88,8 +88,11 @@ installed a number formatter.
 Every list node and string is allocated with `calloc` and freed when its line,
 loop, or subroutine frame ends, or by `g2basic_init()`. There are no fixed
 limits apart from 8 function arguments, the 0 to 65535 line-number range, and
-64-byte buffers for formatted error messages. The expression parser's recursion
-depth follows the nesting of the input.
+64-byte buffers for formatted error messages. The parser's recursion depth is
+bounded by `G2BASIC_MAX_NESTING`: `enter_nesting()` counts each parenthesis,
+unary sign, function-call argument list, and `THEN` statement, and fails with
+`expression too deeply nested` past the limit, so C stack use per line has a
+fixed upper bound.
 
 ## Known issues
 

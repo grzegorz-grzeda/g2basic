@@ -39,6 +39,7 @@ printf '10 FOR I = 1 TO 3\n20 PRINT I\n30 NEXT I\nRUN\n' \
 | `G2BASIC_BUILD_EXAMPLES` | ON | OFF | Build `examples/interactive` |
 | `G2BASIC_ENABLE_MATH_FUNCTIONS` | ON | OFF | Register the 11 math functions besides `min` and `max` |
 | `G2BASIC_ENABLE_MATH` | ON | OFF | Implement them with libm instead of approximations |
+| `G2BASIC_MAX_NESTING` | 32 | 8 | Maximum nesting per line, which bounds C stack use; see [embedding](embedding.md#constraints-for-embedded-hosts) |
 
 "Embedded" means added to another project with `add_subdirectory()`. CMake
 caches option values, so an existing build directory keeps earlier choices.
@@ -88,7 +89,17 @@ printf '10 n = 10\n20 x = 0\n30 y = 1\n40 FOR i = 1 TO n\n50 z = x + y\n60 x = y
 ```
 
 It should print 1, 2, 3, 5, 8, 13, 21, 34, 55, and 89. The smoke test does not
-check its own output. For behavior changes, also check the affected cases in
+check its own output.
+
+```bash
+python3 tests/check_nesting.py
+```
+
+This drives the interactive example (a standalone build, limit 32). It checks
+that parentheses, unary signs, function calls, and `IF ... THEN` statements
+each nest exactly `G2BASIC_MAX_NESTING` levels, and that one level deeper fails
+with `expression too deeply nested` while the interpreter keeps working. CI
+runs it after the smoke test. For behavior changes, also check the affected cases in
 the [language reference](language.md) by hand.
 
 ## Formatting
@@ -159,7 +170,8 @@ Two GitHub Actions workflows run on pull requests and pushes to `main`.
 
 **Build Linux Executable** (`.github/workflows/build-linux.yml`) also runs on
 pushes to `develop` and on published releases. It builds the standalone Release
-configuration on `ubuntu-latest`, runs the Fibonacci smoke test, and uploads
+configuration on `ubuntu-latest`, runs the Fibonacci smoke test and the nesting
+test, and uploads
 the interactive binary as the `g2basic-interactive-linux-x64` artifact for 30
 days. For a published release it attaches
 `g2basic-interactive-linux-x64.tar.gz` with the binary, README, and license.

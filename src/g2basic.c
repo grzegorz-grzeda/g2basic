@@ -50,6 +50,13 @@
 /** @brief Maximum number of arguments allowed for registered functions */
 #define MAX_FUNC_ARGS 8
 
+/* Maximum nesting of parentheses, unary signs, function calls, and IF-THEN
+ * statements in one line. Parsing recurses once per level, so this bounds C
+ * stack use; CMake sets it from G2BASIC_MAX_NESTING. */
+#ifndef G2BASIC_MAX_NESTING
+#define G2BASIC_MAX_NESTING 32
+#endif
+
 /*--------------------------------------------------------------------------------------------------------------------*/
 /* BASIC Language Keywords - These define the supported BASIC language elements
  */
@@ -240,7 +247,24 @@ typedef struct {
         start; /**< Beginning of the input string (for position reporting) */
     const char* s;   /**< Current parsing cursor position */
     const char* err; /**< Error message string (NULL if no error) */
+    unsigned depth;  /**< Current nesting level, at most G2BASIC_MAX_NESTING */
 } Parser;
+/*--------------------------------------------------------------------------------------------------------------------*/
+/* Enter one nesting level; fails with an error instead of recursing deeper.
+ * Pair each successful call with leave_nesting() on the success path. Error
+ * paths may skip it: a parser with err set is never used again. */
+static bool enter_nesting(Parser* p) {
+    if (p->depth >= G2BASIC_MAX_NESTING) {
+        p->err = "expression too deeply nested";
+        return false;
+    }
+    p->depth++;
+    return true;
+}
+/*--------------------------------------------------------------------------------------------------------------------*/
+static void leave_nesting(Parser* p) {
+    p->depth--;
+}
 /*--------------------------------------------------------------------------------------------------------------------*/
 typedef struct Keyword {
     const char* word;
@@ -881,7 +905,12 @@ static double parse_if_statement(Parser* p) {
             goto_target = (int)target_line;
             return 0.0;
         } else {
-            return parse_statement(p);
+            if (!enter_nesting(p)) {
+                return NAN;
+            }
+            double value = parse_statement(p);
+            leave_nesting(p);
+            return value;
         }
     } else {
         // Condition is false, skip the THEN part
@@ -1211,6 +1240,9 @@ static double parse_function_call(Parser* p, const char* func_name) {
 
     double args[MAX_FUNC_ARGS];
     int arg_count = 0;
+    if (!enter_nesting(p)) {
+        return NAN;
+    }
 
     // Parse arguments
     p->s = skip_ws(p->s);
@@ -1235,6 +1267,7 @@ static double parse_function_call(Parser* p, const char* func_name) {
         } while (1);
     }
 
+    leave_nesting(p);
     expect(p, ')');
     if (p->err)
         return NAN;
@@ -1258,14 +1291,22 @@ static double parse_factor(Parser* p) {
     if (*p->s == '+' || *p->s == '-') {
         int neg = (*p->s == '-');
         p->s++;
+        if (!enter_nesting(p)) {
+            return NAN;
+        }
         double v = parse_factor(p);
+        leave_nesting(p);
         return neg ? -v : v;
     }
 
     if (accept(p, '(')) {
+        if (!enter_nesting(p)) {
+            return NAN;
+        }
         double v = parse_expr(p);
         if (p->err)
             return v;
+        leave_nesting(p);
         expect(p, ')');
         return v;
     }
@@ -1405,7 +1446,7 @@ void g2basic_init(void (*print_func)(const char* str)) {
 }
 /*--------------------------------------------------------------------------------------------------------------------*/
 static int g2basic_eval(const char* expr, double* result, const char** error) {
-    Parser p = {.start = expr, .s = expr, .err = NULL};
+    Parser p = {.start = expr, .s = expr, .err = NULL, .depth = 0};
     double v = parse_statement(&p);
     if (p.err) {
         if (error) {

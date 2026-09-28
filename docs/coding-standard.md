@@ -18,8 +18,9 @@ change the affected code, not in unrelated changes.
   `isnan`. `tests/check_math.py` verifies this for the approximation backend.
 - Cast `char` values to `unsigned char` before passing them to `<ctype.h>`
   functions.
-- Avoid variable-length arrays and large stack buffers. Parser recursion must
-  stay proportional to the nesting of the input.
+- Avoid variable-length arrays and large stack buffers. Every recursive parser
+  path must pass through `enter_nesting()` so `G2BASIC_MAX_NESTING` bounds its
+  depth.
 
 ## Formatting and naming
 

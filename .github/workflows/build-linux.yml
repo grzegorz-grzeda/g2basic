@@ -53,6 +53,9 @@ jobs:
         echo "RUN" >> test.bas
         ./build/examples/interactive/g2basic-interactive < test.bas
         
+    - name: Test nesting limit
+      run: python3 tests/check_nesting.py build/examples/interactive/g2basic-interactive
+
     - name: Upload executable artifact
       uses: actions/upload-artifact@v4
       with:

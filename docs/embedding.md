@@ -148,9 +148,18 @@ registers `millis()` to read its uptime clock.
   frames are allocated with `calloc`. Nothing limits their number except
   memory. An allocation failure while storing a line or assigning a variable is
   silently ignored.
-- **Stack use.** Expressions are parsed recursively, so deeply nested
-  parentheses or long chains of unary operators consume C stack. Each output
-  call also uses a 512-byte stack buffer.
+- **Stack use.** Expressions are parsed recursively. `G2BASIC_MAX_NESTING`
+  (default 8 when embedded, 32 standalone) bounds the nesting of parentheses,
+  unary signs, function calls, and `IF ... THEN` statements per line; deeper
+  lines fail with `expression too deeply nested`. Measured on Cortex-M3 with
+  GCC, BASIC needs about 910 bytes of stack at depth 0 (including a 512-byte
+  output buffer) plus up to about 230 bytes per level, for nested function
+  calls in a Debug build. Size the stack for that and set the option to match:
+
+  ```cmake
+  set(G2BASIC_MAX_NESTING 4 CACHE STRING "" FORCE)
+  add_subdirectory(external/g2basic)
+  ```
 - **Blocking.** `RUN` does not return until the program ends. A program that
   loops forever, such as `10 GOTO 10`, never returns. There is no break hook.
 - **Floating point.** All values are `double`. On targets with software
