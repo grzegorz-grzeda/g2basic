@@ -1,22 +1,12 @@
 /**
  * @file g2basic.h
- * @brief G2Basic BASIC Language Interpreter Header
+ * @brief Public API of the G2Basic interpreter.
  *
- * This file contains the public API for the G2Basic interpreter, a lightweight
- * BASIC language interpreter designed for microcontrollers and embedded
- * systems.
- *
- * The interpreter supports:
- * - Dynamic memory management with linked lists
- * - Variables and mathematical expressions
- * - Control flow statements (IF/THEN, FOR/NEXT, GOTO, GOSUB/RETURN)
- * - Built-in mathematical functions
- * - Line-based BASIC program execution
- * - Configurable output system
+ * Include this header to embed the interpreter in a host program. The language
+ * itself is described in `docs/language.md`, and integration in
+ * `docs/embedding.md`.
  *
  * @author Grzegorz Grzęda
- * @version 0.0.1
- * @date 2025
  * @copyright SPDX-License-Identifier: MIT
  */
 
@@ -27,168 +17,160 @@
 #define G2BASIC_H
 /*--------------------------------------------------------------------------------------------------------------------*/
 /**
- * @brief Initialize the G2Basic interpreter system
+ * @defgroup api Embedding API
+ * @brief Functions a host program calls to run BASIC.
  *
- * This function initializes the entire G2Basic interpreter, clearing all
- * variables, program lines, and resetting the interpreter state to a clean
- * starting condition. It also registers all built-in mathematical functions.
+ * The interpreter keeps a single global state: variables, registered functions,
+ * the stored program, and the FOR and GOSUB stacks. It is not reentrant or
+ * thread-safe. Call it from one execution context at a time, never from an
+ * interrupt handler. State is allocated with `calloc` and released only by the
+ * next g2basic_init() call.
+ * @{
+ */
+/*--------------------------------------------------------------------------------------------------------------------*/
+/**
+ * @defgroup api_setup Setup and output
+ * @brief Resetting the interpreter and routing its output.
+ * @{
+ */
+/**
+ * @brief Reset the interpreter and set the text output callback.
  *
- * The function performs the following operations:
- * - Clears all variables from memory
- * - Clears all stored program lines
- * - Resets FOR loop and GOSUB stacks
- * - Resets GOTO target and execution state
- * - Optionally registers built-in math functions (libm or approximations)
- * - Sets up the print function for program output
+ * Frees all variables, registered functions (custom ones included), and stored
+ * program lines, and clears the FOR and GOSUB stacks. It then registers the
+ * built-in functions selected at build time (see @ref math_backends) and resets
+ * the number formatter set by g2basic_set_number_output().
  *
- * @param print_func Function pointer for output operations. Pass NULL to
- *                   disable output. The function should accept a const char*
- *                   string and handle its display/logging appropriately.
+ * Call it once before any other function, and again to start over. Custom
+ * functions must be registered again after each call.
  *
- * @note This function must be called before any other G2Basic operations.
- * @note The print function will be called for all PRINT statements in BASIC
- * programs.
- *
- * @see g2basic_parse()
- * @see g2basic_register_function()
- *
- * @since 0.0.1
+ * @param print_func Receives all interpreter output as NUL-terminated strings:
+ *                   PRINT values, separators, and newlines, LIST output, and
+ *                   RUN error messages. Each string is valid only during the
+ *                   call. `NULL` disables output.
  */
 void g2basic_init(void (*print_func)(const char* str));
 /**
- * Override numeric PRINT output after initialization. NULL restores the
- * default formatter. g2basic_init resets this callback; output remains
- * disabled when its text callback is NULL.
+ * @brief Replace the formatter for numbers printed by PRINT.
+ *
+ * By default each value is formatted with 15 significant digits (`%.15g`) and
+ * passed to the text callback. With a formatter set, PRINT passes each value to
+ * @p print_number instead; separators and newlines still go to the text
+ * callback. The formatter is not called while the text callback is `NULL`.
+ * g2basic_init() resets it.
+ *
+ * @param print_number Number formatter, or `NULL` to restore the default.
  */
 void g2basic_set_number_output(void (*print_number)(double value));
+/** @} */
 /*--------------------------------------------------------------------------------------------------------------------*/
 /**
- * @brief Register a custom function with the expression evaluator
+ * @defgroup api_functions Custom functions
+ * @brief Making C functions callable from BASIC expressions.
+ * @{
+ */
+/**
+ * @brief Make a C function callable from BASIC expressions.
  *
- * This function allows registration of custom functions that can be called
- * from within BASIC expressions and programs. Functions can have a fixed
- * number of arguments or be variadic.
+ * BASIC code calls it as `name(arg, ...)`. The interpreter checks the argument
+ * count before calling. It passes at most 8 arguments; more is the error
+ * `too many function arguments`. There is no error channel for the result: a
+ * NaN result is an ordinary value. Assigning NaN to a variable makes that
+ * variable read as undefined.
  *
- * The registered function will be available for use in BASIC expressions
- * using standard function call syntax: FUNCTION_NAME(arg1, arg2, ...)
+ * @param name      Name used in BASIC; the string is copied. Names are
+ *                  case-sensitive, and the built-in functions are lowercase
+ *                  (`sqrt`). The name must be a valid identifier (a letter or
+ *                  underscore, then letters, digits, or underscores) to be
+ *                  callable; this is not validated. Must not be `NULL`.
+ * @param arg_count Required number of arguments from 0 to 8, or -1 to accept
+ *                  any number up to 8. A call with a different count fails
+ *                  with the error "function 'name' expects N arguments,
+ *                  got M".
+ * @param func_ptr  Implementation. It receives the evaluated arguments and
+ *                  their count and returns the result. Must not be `NULL`;
+ *                  this is not checked.
  *
- * @param name The function name as it will appear in BASIC code. Must be a
- *             valid identifier (alphanumeric + underscore, starting with
- * letter). The name is case-sensitive.
- *
- * @param arg_count Number of arguments the function expects:
- *                  - Positive integer: Fixed number of arguments
- *                  - -1: Variadic function (variable number of arguments)
- *
- * @param func_ptr Pointer to the C function implementing the functionality.
- *                 The function must have the signature:
- *                 double function_name(double args[], int count)
- *                 - args[]: Array of argument values
- *                 - count: Number of arguments passed
- *                 - Returns: Double precision result value
- *
- * @return 0 on success, -1 on error (invalid name, memory allocation failure,
- * etc.)
- *
- * @note Function names must be unique. Registering a function with an existing
- *       name will replace the previous function.
- * @note Variadic functions should validate the argument count internally
- * @note Functions should return NAN for invalid arguments or error conditions
- *
- * @warning The function pointer must remain valid for the lifetime of the
- * interpreter
- *
- * @see g2basic_init()
- *
- * @since 0.0.1
+ * @retval 0  The function is registered.
+ * @retval -1 The name is already registered (built-in functions included), or
+ *            memory allocation failed. An existing function is never replaced.
  *
  * @code
- * // Example: Register a simple square function
- * double my_square(double args[], int count) {
- *     if (count != 1) return NAN;  // Expect exactly 1 argument
+ * static double square(double args[], int count) {
+ *     (void)count;  // Checked by the interpreter: always 1.
  *     return args[0] * args[0];
  * }
  *
- * g2basic_register_function("SQUARE", 1, my_square);
- * // Now can use: PRINT SQUARE(5)  -> outputs 25
+ * g2basic_register_function("square", 1, square);
+ * // BASIC: PRINT square(5)  ->  25
  * @endcode
  */
 int g2basic_register_function(const char* name,
                               int arg_count,
                               double (*func_ptr)(double[], int));
+/** @} */
 /*--------------------------------------------------------------------------------------------------------------------*/
 /**
- * @brief Parse and execute a BASIC language line
+ * @defgroup api_execution Execution
+ * @brief Entering program lines, running statements, and running programs.
+ * @{
+ */
+/**
+ * @brief Process one line of input.
  *
- * This is the main entry point for processing BASIC language input. The
- * function can handle both immediate expression evaluation and program line
- * storage/execution.
+ * The line is classified in this order:
  *
- * The function supports several input formats:
- * - Immediate expressions: "PRINT 2 + 3" (executed immediately)
- * - Program lines: "10 PRINT \"Hello\"" (stored for later execution)
- * - Line deletion: "10" (deletes line 10 from stored program)
- * - Program execution: "RUN" (executes stored program from lowest line number)
+ * 1. `LIST`, `RUN`, or `NEW` as the first word, in any letter case, runs that
+ *    command. Any text after the command is ignored.
+ * 2. A line starting with a digit begins with a line number from 0 to 65535.
+ *    With nothing after it, the numbered line is deleted. Otherwise the rest
+ *    of the line is stored, replacing any line with that number. Stored text
+ *    is not checked until it runs.
+ * 3. Anything else is executed immediately as one statement.
  *
- * Program lines are automatically sorted by line number and can be executed
- * with control flow statements like GOTO, FOR/NEXT, IF/THEN, and GOSUB/RETURN.
+ * Because of rule 2, an immediate expression cannot start with a digit:
+ * `2 + 3` stores line 2. Write `PRINT 2 + 3` or `(2 + 3)` instead.
  *
- * @param input The BASIC language line to parse. Can contain:
- *              - Line number followed by statement: "10 PRINT \"Hello\""
- *              - Just line number (deletes that line): "10"
- *              - Immediate statement: "PRINT 2 + 3"
- *              - Program control: "RUN", "LIST"
+ * `RUN` executes the stored lines in line-number order. A runtime error stops
+ * the program and is reported through the text callback as
+ * `Error in line N: message`; g2basic_parse() still returns 3.
  *
- * @param result Pointer to store the result value. For statements that produce
- *               a value (expressions, calculations), the result is stored here.
- *               For statements without return values, this may be set to 0.
- *               Can be NULL if result is not needed.
+ * @param input      NUL-terminated line without a line terminator. It is not
+ *                   modified or retained.
+ * @param[out] result Must not be `NULL`. Receives the statement's value for
+ *                   return value 0 (the value of an expression or assignment,
+ *                   otherwise 0), the line number for 1 and 2, and 0 for 3.
+ *                   Unchanged for -1.
+ * @param[out] error Must not be `NULL`. Set only on failure, so initialize the
+ *                   pointed-to value to `NULL` before the call. The message is
+ *                   static and must not be freed. Some messages are rewritten
+ *                   by the next call. It is not set when the line number is
+ *                   out of range.
  *
- * @param error Pointer to store error message string. If parsing or execution
- *              fails, this will point to a descriptive error message string.
- *              The string is statically allocated and should not be freed.
- *              Can be NULL if error information is not needed.
- *
- * @return Execution result code:
- *         - 0: Immediate evaluation success (expression calculated and
- * executed)
- *         - 1: Line deleted successfully from program
- *         - 2: Line stored successfully in program
- *         - -1: Error occurred (check *error for details)
- *
- * @note The interpreter maintains program state between calls, allowing
- *       multi-line BASIC programs to be built and executed
- * @note Line numbers must be positive integers (1-999999 typical range)
- * @note Duplicate line numbers replace existing lines
- * @note The function is thread-safe if only one thread calls it at a time
- *
- * @warning Input string is temporarily modified during parsing but restored
- * @warning Error messages are statically allocated and may be overwritten
- *          by subsequent calls
- *
- * @see g2basic_init()
- * @see g2basic_register_function()
- *
- * @since 0.0.1
+ * @retval 0  An immediate statement ran successfully.
+ * @retval 1  A program line was deleted, or did not exist.
+ * @retval 2  A program line was stored.
+ * @retval 3  `LIST`, `RUN`, or `NEW` ran.
+ * @retval -1 The immediate statement failed, or the line number is outside
+ *            0 to 65535.
  *
  * @code
- * // Example usage:
  * double result;
- * const char* error;
+ * const char* error = NULL;
  *
- * // Store a program line
- * int ret = g2basic_parse("10 FOR I = 1 TO 5", &result, &error);
- * if (ret == 2) printf("Line stored\\n");
+ * g2basic_parse("10 FOR I = 1 TO 3", &result, &error);  // 2: stored
+ * g2basic_parse("20 PRINT I", &result, &error);         // 2: stored
+ * g2basic_parse("30 NEXT I", &result, &error);          // 2: stored
+ * g2basic_parse("RUN", &result, &error);                // 3: prints 1, 2, 3
  *
- * // Add more lines...
- * g2basic_parse("20 PRINT I", &result, &error);
- * g2basic_parse("30 NEXT I", &result, &error);
- *
- * // Execute the program
- * ret = g2basic_parse("RUN", &result, &error);
- * if (ret == -1) printf("Error: %s\\n", error);
+ * if (g2basic_parse("y = undefined_name", &result, &error) < 0) {
+ *     printf("Error: %s\n", error);  // undefined variable 'undefined_name'
+ * }
  * @endcode
  */
 int g2basic_parse(const char* input, double* result, const char** error);
+/** @} */
+/*--------------------------------------------------------------------------------------------------------------------*/
+/** @} */
 /*--------------------------------------------------------------------------------------------------------------------*/
 #endif  // G2BASIC_H

@@ -1,0 +1,64 @@
+/**
+@mainpage G2Basic API
+
+G2Basic is a small BASIC interpreter written in C for microcontrollers and
+other embedded hosts. A host program passes it one line at a time: numbered
+lines build a stored program, and other lines run immediately. This reference
+covers the public header `g2basic.h` and the internal backend hook. The source
+is on [GitHub](https://github.com/grzegorz-grzeda/g2basic).
+
+@section mainpage_guides Guides
+
+| Guide | Contents |
+| --- | --- |
+| [Language reference](https://github.com/grzegorz-grzeda/g2basic/blob/main/docs/language.md) | Statements, expressions, commands, and limits |
+| [Embedding](https://github.com/grzegorz-grzeda/g2basic/blob/main/docs/embedding.md) | CMake integration, output, custom functions, and the API contract |
+| [Architecture](https://github.com/grzegorz-grzeda/g2basic/blob/main/docs/architecture.md) | Parser, program store, execution, and memory |
+| [Development](https://github.com/grzegorz-grzeda/g2basic/blob/main/docs/development.md) | Builds, options, tests, CI, and API documentation |
+| [C coding standard](https://github.com/grzegorz-grzeda/g2basic/blob/main/docs/coding-standard.md) | Style, memory, error handling, and documentation rules |
+
+@section mainpage_groups API groups
+
+| Group | Contents | Header |
+| --- | --- | --- |
+| @ref api | @ref api_setup, @ref api_functions, @ref api_execution | `g2basic.h` |
+| @ref internals | @ref math_backends | `g2basic_math.h` |
+
+The group tree is on the **Topics** page. The **Examples** page contains the
+interactive interpreter, a complete host program.
+
+@section mainpage_example Minimal host
+
+@code
+#include <stdio.h>
+#include "g2basic.h"
+
+static void print_text(const char* text) {
+    fputs(text, stdout);
+}
+
+int main(void) {
+    double result;
+    const char* error = NULL;
+
+    g2basic_init(print_text);
+    g2basic_parse("10 FOR I = 1 TO 3", &result, &error);
+    g2basic_parse("20 PRINT I, I * I", &result, &error);
+    g2basic_parse("30 NEXT I", &result, &error);
+    g2basic_parse("RUN", &result, &error);  // 1 1, 2 4, 3 9
+    return 0;
+}
+@endcode
+*/
+
+/**
+@defgroup internals Internal interfaces
+@brief Interfaces between library sources. Host programs do not call these.
+*/
+
+/**
+@example interactive/main.c
+Interactive interpreter: reads lines from standard input, passes each to
+g2basic_parse(), and prints error messages. Build it with the default
+standalone CMake configuration and run `build/examples/interactive/g2basic-interactive`.
+*/

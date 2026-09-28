@@ -40,3 +40,8 @@ endif()
 if(G2BASIC_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
+
+# API documentation target, only for standalone builds.
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    include(${PROJECT_SOURCE_DIR}/cmake/docs.cmake)
+endif()

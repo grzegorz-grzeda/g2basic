@@ -1,119 +1,77 @@
 # G2Basic
 
 [![Build Linux Executable](https://github.com/grzegorz-grzeda/g2basic/actions/workflows/build-linux.yml/badge.svg)](https://github.com/grzegorz-grzeda/g2basic/actions/workflows/build-linux.yml)
-Simple BASIC interpreter for microcontrollers with dynamic memory management and comprehensive language support.
+[![API documentation](https://github.com/grzegorz-grzeda/g2basic/actions/workflows/docs.yml/badge.svg)](https://grzegorz-grzeda.github.io/g2basic/)
 
-## Features
+G2Basic is a small BASIC interpreter written in C for microcontrollers and other
+embedded hosts. A host passes it one line at a time: numbered lines build a
+stored program, and other lines run immediately. All values are numbers.
 
-- **Dynamic Memory Management**: All data structures use linked lists for unlimited nesting
-- **BASIC Language Support**: Variables, functions, control flow (FOR/NEXT, IF/THEN, GOTO, GOSUB/RETURN)
-- **Mathematical Functions**: Built-in math library with common functions
-- **Line-based Programming**: Traditional BASIC line number support
-- **Configurable Output**: Customizable print function for different environments
+- Line-numbered programs with `LIST`, `RUN`, and `NEW`
+- Assignments, arithmetic expressions, and `PRINT`
+- `IF ... THEN`, `FOR ... NEXT` with `STEP`, `GOTO`, `GOSUB` and `RETURN`, `END`
+- Custom C functions callable from BASIC, plus optional math built-ins, with or
+  without libm
+- Heap-allocated state with no fixed limits on program size or nesting
+- Output through host callbacks
 
-## Quick Start
-
-### Download Pre-built Binaries
-
-Visit the [Releases](../../releases) page or check the [Actions](../../actions) tab for the latest builds.
-
-### Building from Source
+## Quick start
 
 ```bash
-# Clone the repository
 git clone https://github.com/grzegorz-grzeda/g2basic.git
 cd g2basic
-
-# Build
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
-
-# Run the interactive interpreter
-./examples/interactive/g2basic-interactive
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+./build/examples/interactive/g2basic-interactive
 ```
 
-### Using as a Library
+Then enter a program and run it:
 
-Add this repository to your project (for example, under `external/g2basic`), then
-include it in your main `CMakeLists.txt`:
+```basic
+10 FOR I = 1 TO 5
+20 PRINT I, I * I
+30 NEXT I
+RUN
+```
+
+Each [CI run](https://github.com/grzegorz-grzeda/g2basic/actions) uploads a
+pre-built Linux binary, and published releases get one attached.
+
+## Using as a library
 
 ```cmake
 add_subdirectory(external/g2basic)
 target_link_libraries(your_app PRIVATE g2basic)
 ```
 
-The `g2basic` target provides its public include directory, so your code can use
-`#include "g2basic.h"`.
+```c
+#include "g2basic.h"
 
-Examples are built by default for standalone builds and disabled by default when
-included in another project. Override this with `G2BASIC_BUILD_EXAMPLES`:
-
-```bash
-# Build only the library
-cmake -S . -B build -DG2BASIC_BUILD_EXAMPLES=OFF
-cmake --build build
+g2basic_init(print_text);  // void print_text(const char* text)
+g2basic_parse("PRINT 6 * 7", &result, &error);
 ```
 
-Set the option to `ON` to enable examples explicitly. If reusing an existing build
-directory, CMake retains the cached option value.
+When embedded, examples and the math built-ins other than `min` and `max` are
+off by default. See [embedding](docs/embedding.md) for options, the API
+contract, and constraints for embedded hosts.
 
-### Optional Math Functions
+## Documentation
 
-`G2BASIC_ENABLE_MATH_FUNCTIONS` defaults to `ON`. Set it to `OFF` to
-register no built-in math functions and omit libm, regardless of the backend
-selection. Arithmetic, comparisons, control flow, and custom function
-registration still work.
+- [API reference](https://grzegorz-grzeda.github.io/g2basic/): grouped HTML docs
+  of the headers, published from `main` by CI.
+- [Language reference](docs/language.md): statements, expressions, commands,
+  built-in functions, error messages, and limits.
+- [Embedding](docs/embedding.md): CMake integration, output, custom functions,
+  and the API contract.
+- [Architecture](docs/architecture.md): parser, program store, execution,
+  memory, and known issues.
+- [Development](docs/development.md): builds, options, tests, formatting, API
+  documentation, and CI.
+- [C coding standard](docs/coding-standard.md): rules for new and changed code.
+- [Contributor and agent instructions](AGENTS.md) ([CLAUDE.md](CLAUDE.md)
+  imports them for Claude Code).
 
-| Math functions | Use libm | Implementation |
-| --- | --- | --- |
-| ON | ON | `g2basic_math.c` (libm) |
-| ON | OFF | `g2basic_math_crude.c` (approximations) |
-| OFF | Either | `g2basic_math_none.c` (no built-ins) |
+## License
 
-```bash
-cmake -S . -B build -DG2BASIC_ENABLE_MATH_FUNCTIONS=OFF
-```
-
-`G2BASIC_ENABLE_MATH` selects libm-backed built-ins (`ON`) or small
-approximations with no libm linkage (`OFF`). It defaults to `ON` standalone
-and `OFF` when embedded. CMake caches the setting:
-
-```bash
-cmake -S . -B build -DG2BASIC_ENABLE_MATH=OFF
-```
-
-With math functions enabled, both backends register `sin`, `cos`, `tan`, `sqrt`, `abs`, `pow`, `log`,
-`log10`, `exp`, `floor`, `ceil`, `min`, and `max`. Custom function
-registration remains available. When math functions are enabled, CMake compiles exactly one implementation:
-`src/g2basic_math.c` for `ON`, or `src/g2basic_math_crude.c` for `OFF`. Only
-the libm implementation links `libm`.
-
-The fallback uses polynomial/series approximations and bounded range reduction.
-Angles are radians; trigonometric inputs above 1,000,000 radians in magnitude
-return NaN. Tangent returns NaN when the approximated cosine is below 0.00001
-in magnitude. Accuracy degrades near tangent poles. Invalid domains return NaN;
-exponential overflow/underflow returns infinity/zero. Negative-base powers
-support integer exponents with magnitude below 2^53; larger exponents return
-NaN. These routines are intended for simple embedded calculations, not
-libm-level accuracy or complete IEEE special-case compatibility.
-
-Direct source builds must compile `src/g2basic.c` and exactly one of
-`src/g2basic_math.c` (link libm), `src/g2basic_math_crude.c` (no libm),
-or `src/g2basic_math_none.c` (no built-ins or libm).
-No preprocessor definition is needed to select the implementation. The fallback still includes `<math.h>` for constants and
-classification macros, which do not require libm.
-
-### Example Usage
-
-```basic
-10 PRINT "Hello, World!"
-20 FOR I = 1 TO 10
-30 PRINT "Count: " I
-40 NEXT I
-50 END
-```
-
-## CI/CD
-
-This project includes automated builds for Linux. See [CI Documentation](.github/CI_README.md) for details.
+G2Basic is MIT licensed; see [LICENSE](LICENSE). Created by Grzegorz Grzęda.
+The documentation theme in `external/doxygen-awesome-css` has its own MIT license.
